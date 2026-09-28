@@ -99,7 +99,8 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "src"))
 for name in (
     "management.api", "control.api", "control.reconciler", "data.api",
-    "data.reconciler", "setup.bootstrap", "setup.acme_responder",
+    "data.reconciler", "data.llm_gateway", "data.mock_llm", "setup.bootstrap",
+    "setup.acme_responder",
 ):
     module = importlib.import_module("plane_demo." + name)
     assert Path(module.__file__).is_relative_to(root)
@@ -123,6 +124,7 @@ def test_radius_application_group_contains_only_the_three_planes():
         "data.bicep",
     }
     assert {path.name for path in (ROOT / "infra/radius/modules").glob("*.bicep")} == {
+        "agentgateway.bicep",
         "challenge.bicep",
         "child-cluster.bicep",
         "database.bicep",

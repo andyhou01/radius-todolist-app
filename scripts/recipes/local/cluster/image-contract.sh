@@ -14,7 +14,8 @@ check_image() {
             case "$tag" in *[!a-f0-9]*) return 1 ;; esac
             [ "${#tag}" -eq 40 ] ;;
         ghcr.io/radius-project/*:*|docker.io/library/*@sha256:*|\
-        docker.io/envoyproxy/*@sha256:*|kindest/node:*@sha256:*) return 0 ;;
+        docker.io/envoyproxy/*@sha256:*|kindest/node:*@sha256:*|\
+        cr.agentgateway.dev/agentgateway:*@sha256:*) return 0 ;;
         *) return 1 ;;
     esac
 }

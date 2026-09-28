@@ -108,3 +108,44 @@ class ConfigMaps:
         if actual != desired:
             raise ConfigurationInvalid
         return actual
+
+    def write_document(self, name: str, data: dict[str, str], component: str) -> bool:
+        """Create or update a non-tenant ConfigMap; return whether its data changed."""
+        timeout = (self.settings.timeout_seconds, self.settings.timeout_seconds)
+        try:
+            existing = self.api.read_namespaced_config_map(
+                name, self.settings.namespace, _request_timeout=timeout
+            )
+        except ApiException as error:
+            if error.status != 404:
+                raise
+            existing = None
+        labels = {
+            "plane-demo/project": self.settings.project_id,
+            "plane-demo/pair": self.settings.pair_id,
+            "plane-demo/component": component,
+        }
+        if existing is not None:
+            current = existing.metadata.labels or {}
+            if any(current.get(key) != value for key, value in labels.items()):
+                raise ConfigurationInvalid
+            if (existing.data or {}) == data:
+                return False
+        body = client.V1ConfigMap(
+            metadata=client.V1ObjectMeta(
+                name=name,
+                namespace=self.settings.namespace,
+                resource_version=existing.metadata.resource_version if existing else None,
+                labels=labels,
+            ),
+            data=data,
+        )
+        if existing is not None:
+            self.api.patch_namespaced_config_map(
+                name=name, namespace=self.settings.namespace, body=body, _request_timeout=timeout
+            )
+        else:
+            self.api.create_namespaced_config_map(
+                namespace=self.settings.namespace, body=body, _request_timeout=timeout
+            )
+        return True

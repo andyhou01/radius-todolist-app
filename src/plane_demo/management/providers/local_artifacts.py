@@ -390,7 +390,8 @@ def binding_inputs(value: dict, prefix: str, group: str) -> dict:
     for image in dependencies:
         require(
             re.fullmatch(
-                r"(?:ghcr\.io/radius-project|docker\.io/(?:library|envoyproxy)|kindest)"
+                r"(?:ghcr\.io/radius-project|docker\.io/(?:library|envoyproxy)|"
+                r"cr\.agentgateway\.dev|kindest)"
                 r"/[a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+)?(?:@sha256:[a-f0-9]{64})?",
                 image["reference"],
             )

@@ -94,6 +94,7 @@ python_image='docker.io/library/python:3.13.12-alpine3.23@sha256:bb1f2fdb1065c85
 postgres_image='docker.io/library/postgres:17.8-alpine3.23@sha256:3430fe182f5065a6ea505c3d432d2c7fff18fbab954df8f277c1dbf4c70124af'
 redis_image='docker.io/library/redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf'
 envoy_image='docker.io/envoyproxy/envoy:v1.37.1@sha256:29496a88fba9c4c9cdef4afe8fec70f536c5ba111b1c2bddbc5436b091ceca33'
+agentgateway_image='cr.agentgateway.dev/agentgateway:v1.5.0@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896'
 
 owned_image() {
   docker_cli image inspect "$1" | jq -er --arg revision "$revision" --arg arch "$arch" \
@@ -141,8 +142,8 @@ if [[ "$stage" == build ]]; then
     --set dynamicrp.buildkit.enabled=false --set global.terraform.loglevel=OFF |
     assets images "$executor" >"$work/chart-images.json"
   jq -c --arg node "$node_image" --arg python "$python_image" --arg postgres "$postgres_image" \
-    --arg envoy "$envoy_image" --arg redis "$redis_image" \
-    '. + [$node,$python,$postgres,$envoy,$redis] | unique' \
+    --arg envoy "$envoy_image" --arg redis "$redis_image" --arg agentgateway "$agentgateway_image" \
+    '. + [$node,$python,$postgres,$envoy,$redis,$agentgateway] | unique' \
     "$work/chart-images.json" >"$work/dependencies.json"
   jq -er '.[]' "$work/dependencies.json" >"$work/dependency-list"
   : >"$work/pulled.jsonl"

@@ -1,10 +1,16 @@
 import logging
+import re
+from typing import Annotated
 
-from fastapi import Depends, HTTPException
+import httpx
+from fastapi import Depends, Header, HTTPException
 from kubernetes.client.exceptions import ApiException
+from pydantic import BaseModel, ConfigDict, Field
 from redis.exceptions import RedisError
 from urllib3.exceptions import HTTPError
 
+from plane_demo.data import llm_gateway
+from plane_demo.data.llm_gateway import ChatMessage
 from plane_demo.shared.auth import authenticate
 from plane_demo.shared.http import base_app
 from plane_demo.shared.kube import ConfigMaps, ConfigurationInvalid, ConfigurationMissing
@@ -14,15 +20,31 @@ from plane_demo.shared.settings import Settings, redis_client
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings, *, config_maps=None, counter_store=None):
+class TenantChatRequest(BaseModel):
+    """Tenants choose a tier and send messages; the gateway maps the tier to a model."""
+
+    model_config = ConfigDict(extra="forbid")
+    tier: llm_gateway.Tier = "small"
+    messages: Annotated[list[ChatMessage], Field(min_length=1, max_length=32)]
+
+
+TRACEPARENT = re.compile(r"[0-9a-f]{2}-(?!0{32})[0-9a-f]{32}-(?!0{16})[0-9a-f]{16}-[0-9a-f]{2}")
+
+
+def create_app(settings: Settings, *, config_maps=None, counter_store=None, llm_client=None):
     app = base_app(settings)
     authenticated = [Depends(authenticate(settings.demo_key))]
     maps = config_maps if config_maps is not None else ConfigMaps(settings)
     counters = counter_store if counter_store is not None else redis_client(settings)
+    llm = llm_client
+    if llm is None and settings.llm_gateway_url:
+        llm = httpx.Client(
+            base_url=settings.llm_gateway_url, timeout=settings.timeout_seconds, trust_env=False
+        )
 
-    def serve(tenant_id: str, increment: bool):
+    def applied_configuration(tenant_id: str):
         try:
-            applied = maps.read(tenant_id)
+            return maps.read(tenant_id)
         except ConfigurationMissing:
             raise HTTPException(404, "tenant_config_not_applied") from None
         except ConfigurationInvalid:
@@ -30,6 +52,9 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None):
         except (ApiException, HTTPError, OSError):
             logger.warning("local_configuration_unavailable")
             raise HTTPException(503, "local_configuration_unavailable") from None
+
+    def serve(tenant_id: str, increment: bool):
+        applied = applied_configuration(tenant_id)
         key = f"plane-demo:{applied.onboarding_id}:{tenant_id}:counter"
         try:
             value = counters.incr(key) if increment else counters.get(key)
@@ -53,7 +78,72 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None):
     def increment_counter(tenant_id: TenantId):
         return serve(tenant_id, True)
 
+    @app.post("/tenants/{tenant_id}/chat/completions", dependencies=authenticated)
+    def chat_completion(
+        tenant_id: TenantId,
+        request: TenantChatRequest,
+        traceparent: Annotated[str | None, Header()] = None,
+    ):
+        if llm is None:
+            raise HTTPException(404, "llm_gateway_disabled")
+        applied = applied_configuration(tenant_id)
+        # Tenant identity comes from the authenticated path, never from caller headers.
+        headers = {
+            llm_gateway.TENANT_HEADER: tenant_id,
+            llm_gateway.ONBOARDING_HEADER: str(applied.onboarding_id),
+            llm_gateway.TIER_HEADER: request.tier,
+        }
+        # Continue a caller's W3C trace so gateway spans join it; drop malformed values.
+        if traceparent and TRACEPARENT.fullmatch(traceparent):
+            headers["traceparent"] = traceparent
+        try:
+            response = llm.post(
+                llm_gateway.CHAT_PATH,
+                json={"messages": [message.model_dump() for message in request.messages]},
+                headers=headers,
+            )
+        except httpx.HTTPError:
+            logger.warning("llm_gateway_unavailable")
+            raise HTTPException(503, "llm_gateway_unavailable") from None
+        if response.status_code == 429:
+            raise HTTPException(429, "llm_rate_limited")
+        if response.status_code == 404:
+            # The gateway has not loaded this tenant's current onboarding route yet.
+            raise HTTPException(503, "llm_route_not_ready")
+        if response.status_code == 400 and guardrail_rejected(response):
+            raise HTTPException(400, "llm_guardrail_rejected")
+        if response.status_code != 200:
+            logger.warning("llm_gateway_rejected status=%d", response.status_code)
+            raise HTTPException(502, "llm_gateway_rejected")
+        try:
+            completion = response.json()
+            choice = completion["choices"][0]
+            return {
+                "tenant_id": tenant_id,
+                "onboarding_id": applied.onboarding_id,
+                "tier": request.tier,
+                "model": str(completion["model"]),
+                "message": {
+                    "role": "assistant",
+                    "content": str(choice["message"]["content"]),
+                },
+                "usage": {
+                    key: int(completion["usage"][key])
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                },
+            }
+        except (ValueError, KeyError, IndexError, TypeError):
+            logger.warning("llm_gateway_invalid_response")
+            raise HTTPException(502, "llm_gateway_invalid_response") from None
+
     return app
+
+
+def guardrail_rejected(response: httpx.Response) -> bool:
+    try:
+        return response.json()["error"]["code"] == llm_gateway.GUARDRAIL_CODE
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 def main() -> None:

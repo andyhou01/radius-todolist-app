@@ -5,6 +5,7 @@ import psycopg
 from kubernetes.client.exceptions import ApiException
 from urllib3.exceptions import HTTPError
 
+from plane_demo.data import llm_gateway
 from plane_demo.shared.db import connect
 from plane_demo.shared.kube import ConfigMaps, ConfigurationInvalid, ConfigurationMissing
 from plane_demo.shared.models import AppliedConfiguration, ReconcileResult
@@ -41,6 +42,7 @@ def run_once(settings: Settings, *, config_maps=None) -> ReconcileResult:
         result.failed += 1
         return result
     maps = config_maps if config_maps is not None else ConfigMaps(settings)
+    applied_configurations = []
     for row in rows:
         result.examined += 1
         desired = AppliedConfiguration(**row)
@@ -48,6 +50,7 @@ def run_once(settings: Settings, *, config_maps=None) -> ReconcileResult:
             applied = maps.apply(desired)
             # A second poller may have already applied a newer desired version.
             if applied.version > desired.version:
+                applied_configurations.append(applied)
                 continue
             if applied != desired:
                 raise ConfigurationInvalid
@@ -58,14 +61,51 @@ def run_once(settings: Settings, *, config_maps=None) -> ReconcileResult:
                 report(settings, desired, False)
             except psycopg.Error as error:
                 logger.warning("data_report_failed sqlstate=%s", error.sqlstate or "unavailable")
+            previous = last_applied(maps, desired.tenant_id)
+            if previous is not None:
+                applied_configurations.append(previous)
             continue
+        applied_configurations.append(applied)
         try:
             report(settings, applied, True)
             result.succeeded += 1
         except psycopg.Error as error:
             logger.warning("data_report_failed sqlstate=%s", error.sqlstate or "unavailable")
             result.failed += 1
+    if settings.llm_backend_host and not publish_llm_gateway(
+        settings, maps, applied_configurations
+    ):
+        result.failed += 1
     return result
+
+
+def last_applied(maps, tenant_id: str) -> AppliedConfiguration | None:
+    """Keep a tenant's previously applied gateway route when a newer write fails."""
+    try:
+        return maps.read(tenant_id)
+    except (ApiException, HTTPError, ConfigurationInvalid, ConfigurationMissing, OSError):
+        return None
+
+
+def publish_llm_gateway(settings: Settings, maps, applied: list[AppliedConfiguration]) -> bool:
+    document = llm_gateway.render(
+        applied,
+        backend_host=settings.llm_backend_host,
+        models={"small": settings.llm_small_model, "large": settings.llm_large_model},
+        requests_per_minute=settings.llm_requests_per_minute,
+        tokens_per_minute=settings.llm_tokens_per_minute,
+        otlp_host=settings.llm_otlp_host,
+    )
+    try:
+        changed = maps.write_document(
+            llm_gateway.CONFIG_MAP, {llm_gateway.CONFIG_KEY: document}, "agentgateway"
+        )
+    except (ApiException, HTTPError, ConfigurationInvalid, OSError):
+        logger.warning("llm_gateway_config_failed")
+        return False
+    if changed:
+        logger.info("llm_gateway_config_applied routes=%d", len(applied))
+    return True
 
 
 def main() -> None:

@@ -198,7 +198,7 @@ def inspect_image(root: Path, role: str, arch: str, path: Path, upstream: str | 
                     and re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("id", ""))
                     and re.fullmatch(
                         r"(?:ghcr.io/radius-project|docker.io/library|docker.io/envoyproxy|"
-                        r"kindest)/[a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+)?"
+                        r"cr.agentgateway.dev|kindest)/[a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+)?"
                         r"(?:@sha256:[a-f0-9]{64})?",
                         image.get("reference", ""),
                     ),

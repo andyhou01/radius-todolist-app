@@ -47,7 +47,7 @@ variable "dependency_images" {
       length(distinct([for image in var.dependency_images : image.reference])) == length(var.dependency_images)
       ) && alltrue([
         for image in var.dependency_images : can(regex("^sha256:[0-9a-f]{64}$", image.image_id)) && can(regex(
-          "^(ghcr\\.io/radius-project|docker\\.io/(library|envoyproxy)|kindest)/[a-zA-Z0-9._/-]+(:[a-zA-Z0-9._-]+)?(@sha256:[0-9a-f]{64})?$",
+          "^(ghcr\\.io/radius-project|docker\\.io/(library|envoyproxy)|cr\\.agentgateway\\.dev|kindest)/[a-zA-Z0-9._/-]+(:[a-zA-Z0-9._-]+)?(@sha256:[0-9a-f]{64})?$",
           image.reference
         ))
     ])

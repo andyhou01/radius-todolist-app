@@ -8,6 +8,11 @@ param ownershipLabels object = {
 }
 param gatewayPhase string = 'challenge'
 param certificateSecretUri string = ''
+@description('Deploy the per-pair agentgateway and its deterministic mock LLM backend.')
+param llmGateway bool = false
+param agentgatewayImage string = ''
+@description('Optional in-cluster OTLP collector host:port for agentgateway traces.')
+param otlpHost string = ''
 
 resource redis 'Applications.Datastores/redisCaches@2023-10-01-preview' = {
   name: 'redis'
@@ -31,6 +36,11 @@ module api '../modules/workload.bicep' = {
     runtimeSecretName: 'data-api-runtime'
     api: true
     automountToken: true
+    settings: llmGateway ? {
+      LLM_GATEWAY_URL: {
+        value: 'http://agentgateway:4000'
+      }
+    } : {}
     connections: {
       redis: {
         source: redis.id
@@ -51,6 +61,39 @@ module reconciler '../modules/workload.bicep' = {
     serviceAccount: 'data-reconciler'
     runtimeSecretName: 'data-reconciler-runtime'
     automountToken: true
+    settings: llmGateway ? union({
+      LLM_BACKEND_HOST: {
+        value: 'mock-llm:8088'
+      }
+    }, empty(otlpHost) ? {} : {
+      LLM_OTLP_HOST: {
+        value: otlpHost
+      }
+    }) : {}
+  }
+}
+
+module mockLlm '../modules/workload.bicep' = if (llmGateway) {
+  name: 'data-mock-llm'
+  params: {
+    application: application
+    environment: environment
+    name: 'mock-llm'
+    image: image
+    ownershipLabels: ownershipLabels
+    entrypoint: 'plane_demo.data.mock_llm'
+    serviceAccount: 'mock-llm'
+    api: true
+  }
+}
+
+module agentgateway '../modules/agentgateway.bicep' = if (llmGateway) {
+  name: 'data-agentgateway'
+  params: {
+    application: application
+    environment: environment
+    image: agentgatewayImage
+    ownershipLabels: ownershipLabels
   }
 }
 

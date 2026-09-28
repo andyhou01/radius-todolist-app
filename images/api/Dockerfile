@@ -15,6 +15,7 @@ COPY src/plane_demo/management/__init__.py src/plane_demo/management/api.py ./sr
 COPY src/plane_demo/control/__init__.py src/plane_demo/control/api.py \
     src/plane_demo/control/reconciler.py ./src/plane_demo/control/
 COPY src/plane_demo/data/__init__.py src/plane_demo/data/api.py \
+    src/plane_demo/data/llm_gateway.py src/plane_demo/data/mock_llm.py \
     src/plane_demo/data/reconciler.py ./src/plane_demo/data/
 COPY src/plane_demo/shared/__init__.py src/plane_demo/shared/auth.py \
     src/plane_demo/shared/db.py src/plane_demo/shared/http.py src/plane_demo/shared/kube.py \

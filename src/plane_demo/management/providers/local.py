@@ -44,6 +44,11 @@ PYTHON_IMAGE = (
     "docker.io/library/python:3.13.12-alpine3.23@sha256:"
     "bb1f2fdb1065c85468775c9d680dcd344f6442a2d1181ef7916b60a623f11d40"
 )
+# Prepared and loaded into child clusters by scripts/operations/local/build.sh.
+AGENTGATEWAY_IMAGE = (
+    "cr.agentgateway.dev/agentgateway:v1.5.0@sha256:"
+    "bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896"
+)
 TERRAFORM_INIT = "/opt/radplanes/bootstrap/terraform-init.py"
 PREPARED_ASSETS = Path("/opt/radplanes/bootstrap")
 
@@ -1057,6 +1062,8 @@ class LocalProvider:
         }
         if role == "management":
             values.update(provisionerImage=self.config.images["provisioner"])
+        if role == "data":
+            values.update(llmGateway=True, agentgatewayImage=AGENTGATEWAY_IMAGE)
         observe(f"{role}-application")
         self.deploy(slot, role, role, values)
         self.kubectl(

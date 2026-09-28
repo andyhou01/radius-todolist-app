@@ -97,7 +97,8 @@ def test_bundle_keeps_one_exact_immutable_archive_per_server():
             {"name": "MODULE_SHA256", "value": module["sha256"]}
         ]
         assert module["url"].endswith("/" + module["sha256"] + ".tar.gz")
-    assert len(bundle["sharedSourceHashes"]) == 15
+    assert len(bundle["sharedSourceHashes"]) == 16
+    assert "infra/radius/modules/agentgateway.bicep" in bundle["sharedSourceHashes"]
     for name, sha in bundle["sharedSourceHashes"].items():
         assert sha == common.digest((ROOT / name).read_bytes())
     assert {
