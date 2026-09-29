@@ -20,7 +20,7 @@ Issues = "https://github.com/macromania/radius-todolist-app/issues"
 
 [[tool.uv.index]]
 name = "pypi"
-url = "https://pypi.org/simple"
+url = "https://packagefeedproxy.microsoft.io/pypi/simple"
 default = true
 
 [dependency-groups]

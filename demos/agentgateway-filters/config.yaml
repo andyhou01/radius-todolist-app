@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# Tenant -> Gateway (API key) -> PreRouting filters -> route selection
+#        -> PostRouting filters -> AI backend (Azure-hosted or vendor-hosted)
+#
+# Phase 1 Frontend : frontendPolicies (access log + tracing)
+# Phase 2 PreRouting: gateway policies  (apiKey, extAuthz -> passport/guardrails/policy/router)
+# Phase 3 PostRouting: route policies   (extAuthz -> event tap, token rate limit)
+# Phase 4 Backend  : backend policies   (response masking)
+frontendPolicies:
+  accessLog:
+    add:
+      tenant: request.headers["x-tenant"]
+      route_target: request.headers["x-route-target"]
+
+gateways:
+  default:
+    port: 3000
+    # --- Phase 2: PreRouting -------------------------------------------------
+    apiKey:
+      mode: strict
+      location:
+        header:
+          name: x-api-key
+      keys:
+        - key: demo-key-acme
+          metadata: {tenant: acme}
+        - key: demo-key-globex
+          metadata: {tenant: globex}
+    extAuthz:
+      host: filters:9001
+      failureMode: deny
+      protocol:
+        http:
+          path: '"/prerouting"'
+          addRequestHeaders:
+            x-tenant: apiKey.tenant
+          includeResponseHeaders:
+            - x-passport
+            - x-tenant
+            - x-tier
+            - x-route-target
+            - x-request-id
+      includeRequestHeaders:
+        - x-request-id
+      includeRequestBody:
+        maxRequestBytes: 65536
+
+routes:
+  - name: azure-models
+    matches:
+      - path: {pathPrefix: /v1/chat/completions}
+        headers:
+          - name: x-route-target
+            value: {exact: azure}
+    policies: &postrouting
+      # --- Phase 3: PostRouting ----------------------------------------------
+      extAuthz:
+        host: filters:9001
+        failureMode: deny
+        protocol:
+          http:
+            path: '"/postrouting"'
+        includeRequestHeaders:
+          - x-passport
+          - x-route-target
+          - x-request-id
+      localRateLimit:
+        - maxTokens: 20
+          tokensPerFill: 20
+          fillInterval: 60s
+          type: requests
+    backends:
+      - ai:
+          name: azure-hosted
+          hostOverride: azure-models:9101
+          provider:
+            openAI: {model: gpt-4o-mini}
+        policies: &backend
+          # --- Phase 4: Backend ------------------------------------------------
+          ai:
+            promptGuard:
+              response:
+                - regex:
+                    action: mask
+                    rules:
+                      - builtin: email
+
+  - name: vendor-models
+    matches:
+      - path: {pathPrefix: /v1/chat/completions}
+        headers:
+          - name: x-route-target
+            value: {exact: vendor}
+    policies: *postrouting
+    backends:
+      - ai:
+          name: vendor-hosted
+          hostOverride: vendor-models:9102
+          provider:
+            openAI: {model: vendor-large}
+        policies: *backend
