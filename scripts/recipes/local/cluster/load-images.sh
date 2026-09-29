@@ -37,6 +37,11 @@ trap 'exit 1' HUP INT TERM
 
 printf '%s\n' "$LOCAL_IMAGES" > "$work/images"
 printf '%s\n' "$LOCAL_IMAGE_IDS" > "$work/ids"
+# Normalize CRLF inputs and drop blank lines to keep image/id pairing stable.
+awk '{ sub(/\r$/, ""); if (length($0) > 0) print }' "$work/images" > "$work/images.clean"
+mv "$work/images.clean" "$work/images"
+awk '{ sub(/\r$/, ""); if (length($0) > 0) print }' "$work/ids" > "$work/ids.clean"
+mv "$work/ids.clean" "$work/ids"
 count=0
 while IFS= read -r image; do
     check_image "$LOCAL_RESOURCE_PREFIX" "$image" || {
@@ -85,32 +90,56 @@ mkfifo "$work/stream"
 exec 3< "$work/ids"
 while IFS= read -r image; do
     IFS= read -r expected <&3 || { echo "Missing prepared image ID" >&2; exit 1; }
+    verify_loaded_ref=yes
     docker image inspect --format '{{.Id}}' "$image" > "$work/image-id" &
     consumer=$!
     wait "$consumer"
     consumer=
     IFS= read -r actual < "$work/image-id"
     [ "$actual" = "$expected" ] || { echo "Prepared image changed before import" >&2; exit 1; }
-    docker image save "$image" > "$work/stream" &
-    producer=$!
-    docker exec -i "$node" ctr --namespace k8s.io images import - < "$work/stream" &
-    consumer=$!
-    saved=0
-    imported=0
-    wait "$producer" || saved=$?
-    producer=
-    wait "$consumer" || imported=$?
-    consumer=
-    if [ "$saved" -ne 0 ] || [ "$imported" -ne 0 ]; then
-        echo "Image stream failed: save=$saved import=$imported" >&2; exit 1
+    case "$image" in
+        localhost/*)
+            docker image save "$image" > "$work/stream" &
+            producer=$!
+            docker exec -i "$node" ctr --namespace k8s.io images import - < "$work/stream" &
+            consumer=$!
+            saved=0
+            imported=0
+            wait "$producer" || saved=$?
+            producer=
+            wait "$consumer" || imported=$?
+            consumer=
+            if [ "$saved" -ne 0 ] || [ "$imported" -ne 0 ]; then
+                echo "Image stream failed: save=$saved import=$imported" >&2; exit 1
+            fi
+            ;;
+        *)
+            # Multi-platform public images save as an OCI index without platform
+            # content, so the child pulls the same digest-pinned reference itself.
+            pull_ref=$image
+            case "$pull_ref" in
+                kindest/*) pull_ref="docker.io/$pull_ref" ;;
+            esac
+            docker exec "$node" ctr --namespace k8s.io images pull "$pull_ref" > /dev/null &
+            consumer=$!
+            pulled=0
+            wait "$consumer" || pulled=$?
+            consumer=
+            [ "$pulled" -eq 0 ] || { echo "Image pull failed in child: $image" >&2; exit 1; }
+            # ctr may normalize pulled refs; enforce strict ref presence only for
+            # stream-imported localhost images.
+            verify_loaded_ref=no
+            ;;
+    esac
+    if [ "$verify_loaded_ref" = yes ]; then
+        docker exec "$node" ctr --namespace k8s.io images list > "$work/loaded" &
+        consumer=$!
+        wait "$consumer"
+        consumer=
+        grep -F -x -- "$image" "$work/loaded" >/dev/null || grep -F -- "$expected" "$work/loaded" >/dev/null || {
+            echo "Imported image reference is absent from the child" >&2; exit 1
+        }
     fi
-    docker exec "$node" ctr --namespace k8s.io images list --quiet > "$work/loaded" &
-    consumer=$!
-    wait "$consumer"
-    consumer=
-    grep -F -x -- "$image" "$work/loaded" >/dev/null || {
-        echo "Imported image reference is absent from the child" >&2; exit 1
-    }
 done < "$work/images"
 if IFS= read -r _unexpected <&3; then
     echo "Unexpected extra image IDs" >&2

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Drive the demo scenarios against the running compose stack.
 set -euo pipefail
-GW=${GW:-http://127.0.0.1:35496}
+GW=${GW:-http://127.0.0.1:35521}
 chat() {
   local title=$1 key=$2 body=$3
   printf '\n== %s\n' "$title"
@@ -22,4 +22,4 @@ chat '6. Backend filter masks email in the model response' demo-key-acme \
   '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"mail me at jane@example.com"}]}'
 printf '\n== Reconciler state (meter / perf / audit), after the metrics bridge tick\n'
 sleep 6
-curl -sS ${RECONCILERS:-http://127.0.0.1:35497}/
+curl -sS ${RECONCILERS:-http://127.0.0.1:35522}/

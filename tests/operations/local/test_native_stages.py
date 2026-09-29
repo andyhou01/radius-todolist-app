@@ -152,8 +152,14 @@ elif tool == "docker":
               "Config":{"Image":state["node_image"],
                         "Labels":{"io.x-k8s.kind.cluster":cluster}}}])
     elif args[0] == "exec":
-        assert args[1] == node and args[2] == "stat"
-        print("0 0 660")
+        assert args[1] == node
+        # Bootstrap may pre-pull public images inside the node via containerd.
+        if args[2:6] == ["ctr", "--namespace", "k8s.io", "images"] and args[6] == "pull":
+            state.setdefault("pulled", []).append(args[-1]); save()
+            print("visible-node-pull-output")
+        else:
+            assert args[2] == "stat"
+            print("0 0 660")
     else: raise AssertionError(args)
 elif tool == "rad":
     assert args[0] == "--config" and "plane-local-" in args[1]

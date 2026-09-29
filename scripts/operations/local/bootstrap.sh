@@ -66,6 +66,21 @@ radius() { demo_run "Radius $1" "${environment[@]}" rad --config "$work/radius.y
 assets() { "${environment[@]}" uv run --no-sync --project "$ROOT" python \
   "$ROOT/scripts/operations/local/assets.py" "$@"; }
 
+retry_radius_environment_create() {
+  local attempts=6
+  local delay=5
+  local attempt
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    if radius environment create management --group "$stem" --kubernetes-namespace "$cluster" \
+      --workspace "$cluster"; then
+      return 0
+    fi
+    (( attempt < attempts )) || return 1
+    demo_status warning "Radius environment create failed (attempt $attempt/$attempts), retrying in ${delay}s"
+    sleep "$delay"
+  done
+}
+
 # This re-exports and checks image contents now; there is no saved image-review authority.
 bash "$ROOT/scripts/operations/local/build.sh" inspect >"$work/images.json"
 jq -e --arg stem "$stem" '.stem == $stem and (.images|length) == 4' \
@@ -199,8 +214,7 @@ if [[ "$existing" == false ]]; then
   ' | kube create -f -
   radius workspace create kubernetes "$cluster" --context "$context"
   radius group create "$stem" --workspace "$cluster"
-  radius environment create management --group "$stem" --kubernetes-namespace "$cluster" \
-    --workspace "$cluster"
+  retry_radius_environment_create
   for type in clusters postgresql gateways; do
     radius resource-type create --from-file "$ROOT/infra/radius/types/$type.yaml" \
       --workspace "$cluster"

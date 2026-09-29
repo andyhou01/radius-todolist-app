@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Card, PageHeader } from "./components/ui";
 import { PLANES, knownTenants, plane } from "./lib/client";
 
-type Health = Record<string, { state: "checking" | "healthy" | "down"; detail: string }>;
+type Health = Record<string, { state: "checking" | "healthy" | "not provisioned" | "down"; detail: string }>;
 
 const FLOW = [
   ["1", "Tenant request", "Operator calls Management POST /tenants"],
@@ -25,7 +25,13 @@ export default function Overview() {
       PLANES.map(async (p) => {
         const result = await plane(p.target, "GET", "/healthz");
         const detail = result.ok ? "GET /healthz 200" : result.stderr.split("\n").filter(Boolean).pop() ?? "unreachable";
-        setHealth((prev) => ({ ...prev, [p.target]: { state: result.ok ? "healthy" : "down", detail } }));
+        // Local child clusters are created on demand by the first tenant of each pair.
+        const missing = !result.ok && detail.includes("Expected one owned kind node");
+        const state = result.ok ? "healthy" : missing ? "not provisioned" : "down";
+        setHealth((prev) => ({
+          ...prev,
+          [p.target]: { state, detail: missing ? "Cluster not created yet; provision a tenant for this pair" : detail },
+        }));
       }),
     );
   }, []);
@@ -86,7 +92,7 @@ export default function Overview() {
                   <td className="py-2 font-medium">{p.name}</td>
                   <td className="text-gray-600">{p.role}</td>
                   <td>
-                    <Badge tone={h?.state === "healthy" ? "green" : h?.state === "down" ? "red" : "yellow"}>{h?.state ?? "checking"}</Badge>
+                    <Badge tone={h?.state === "healthy" ? "green" : h?.state === "down" ? "red" : h?.state === "not provisioned" ? "gray" : "yellow"}>{h?.state ?? "checking"}</Badge>
                   </td>
                   <td className="text-xs text-gray-500">{h?.detail}</td>
                 </tr>
@@ -94,7 +100,7 @@ export default function Overview() {
             })}
           </tbody>
         </table>
-        <p className="text-xs text-gray-500">Isolated pairs exist only after an isolated tenant is provisioned, so they may show as down.</p>
+        <p className="text-xs text-gray-500">Control and data clusters are created on demand: the shared pair by the first shared tenant, the isolated pair by an isolated tenant.</p>
       </Card>
 
       <Card title="How a tenant flows through the system">

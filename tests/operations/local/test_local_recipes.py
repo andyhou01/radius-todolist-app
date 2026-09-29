@@ -250,6 +250,8 @@ def docker_double(tmp_path):
         "elif 'import' in args:\n"
         "    assert sys.stdin.buffer.read() == b'offline-image-stream'\n"
         "    sys.exit(19 if mode == 'import' else 0)\n"
+        "elif 'pull' in args:\n"
+        "    sys.exit(21 if mode == 'pull' else 0)\n"
         "elif 'list' in args:\n"
         "    print('not-the-image' if mode == 'absent' else os.environ['LOCAL_IMAGES'])\n"
         "else:\n"
@@ -310,8 +312,20 @@ def test_image_copy_runpath_targets_only_created_owned_child(docker_double, slot
         ["exec", "-i", node, "ctr", "--namespace", "k8s.io", "images", "import", "-"],
         ["image", "save", API_IMAGE],
     ]
-    assert sum(command[:2] == ["image", "save"] for command in commands) == 4
-    assert sum(command[-3:] == ["images", "list", "--quiet"] for command in commands) == 4
+    assert sum(command[:2] == ["image", "save"] for command in commands) == 3
+    assert [command for command in commands if "pull" in command] == [
+        [
+            "exec",
+            node,
+            "ctr",
+            "--namespace",
+            "k8s.io",
+            "images",
+            "pull",
+            f"docker.io/{common.NODE_IMAGE}",
+        ]
+    ]
+    assert sum(command[-2:] == ["images", "list"] for command in commands) == 3
     assert all("create" not in command and "run" not in command for command in commands)
 
 

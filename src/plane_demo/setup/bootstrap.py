@@ -350,7 +350,7 @@ def main() -> None:
             os.environ.get("ADMISSION_MODE", "on_demand"),
         )
     except (psycopg.Error, ValueError, KeyError, OSError) as error:
-        logger.error("bootstrap_failed category=%s", type(error).__name__)
+        logger.error("bootstrap_failed category=%s detail=%s", type(error).__name__, error)
         raise SystemExit(1) from None
 
 
