@@ -130,7 +130,7 @@ if [[ "$stage" == build ]]; then
   done
   packaged="$work/source/scripts/operations/local/.packaged"
   mkdir -m 700 "$packaged" "$work/chart"
-  helm_cli pull oci://ghcr.io/radius-project/helm-chart --version 0.60.2 \
+  helm_cli pull oci://ghcr.io/radius-project/helm-chart/radius --version 0.60.2 \
     --destination "$work/chart"
   charts=("$work/chart/"*.tgz)
   if (( ${#charts[@]} != 1 )) || [[ ! -f "${charts[0]}" ]]; then
