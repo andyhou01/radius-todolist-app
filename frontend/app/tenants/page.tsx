@@ -66,7 +66,7 @@ export default function Tenants() {
             <Field label="Isolation">
               <select className={inputClass} value={form.isolation} onChange={(e) => setForm({ ...form, isolation: e.target.value })}>
                 <option value="shared">shared (reuse shared cluster pair)</option>
-                <option value="isolated">isolated (dedicated cluster pair)</option>
+                <option value="isolated">isolated (own cluster pair)</option>
               </select>
             </Field>
             <Field label="Initial message">
