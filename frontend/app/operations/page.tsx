@@ -31,10 +31,10 @@ export default function Operations() {
         <ol className="space-y-2">
           {STEPS.map(([command, text], index) => (
             <li key={command} className="flex gap-3">
-              <span className="text-gray-400">{index + 1}.</span>
+              <span className="text-neutral-400">{index + 1}.</span>
               <div>
-                <code className="rounded bg-gray-100 px-1">{command}</code>
-                <div className="text-gray-600">{text}</div>
+                <code className="rounded bg-neutral-100 px-1">{command}</code>
+                <div className="text-neutral-600">{text}</div>
               </div>
             </li>
           ))}
@@ -49,11 +49,11 @@ export default function Operations() {
           </>
         }
       >
-        {!output && <p className="text-gray-500">Run a command to see current endpoints and plane state.</p>}
+        {!output && <p className="text-neutral-500">Run a command to see current endpoints and plane state.</p>}
         {output && (
           <>
             <Badge tone={output.result.ok ? "green" : "red"}>{output.result.ok ? "ok" : "failed"}</Badge>
-            <pre className="max-h-96 overflow-auto rounded bg-gray-50 p-2 text-xs whitespace-pre-wrap">
+            <pre className="max-h-96 overflow-auto rounded bg-neutral-50 p-2 text-xs whitespace-pre-wrap">
               {[output.result.stdout, output.result.stderr].filter(Boolean).join("\n")}
             </pre>
           </>

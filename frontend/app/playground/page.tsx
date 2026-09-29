@@ -1,9 +1,9 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
-import { Badge, Button, Card, Field, Json, PageHeader, inputClass } from "../components/ui";
-import { OpResult, errorText, knownTenants, pairTargets, plane } from "../lib/client";
+import { useState } from "react";
+import { useTenantPlane } from "../components/tenant";
+import { Badge, Button, Card, Field, Json, NeedTenant, PageHeader, inputClass } from "../components/ui";
+import { OpResult, errorText, plane } from "../lib/client";
 
 const PRESETS = [
   ["Normal question", "Summarize what a control plane does in one sentence."],
@@ -14,51 +14,32 @@ const PRESETS = [
 
 type Chat = { model: string; tier: string; message: { content: string }; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
 
-function Playground() {
-  const initial = useSearchParams().get("tenant") ?? "";
-  const [tenant, setTenant] = useState(initial);
+export default function Playground() {
+  const { tenant, target, error } = useTenantPlane("data");
   const [tier, setTier] = useState("small");
   const [prompt, setPrompt] = useState(PRESETS[0][1]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OpResult | null>(null);
-  const [route, setRoute] = useState("");
-  const [known, setKnown] = useState<string[]>([]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setKnown(knownTenants()), 0);
-    return () => clearTimeout(timer);
-  }, []);
 
   async function send(event?: React.FormEvent) {
     event?.preventDefault();
+    if (!target) return;
     setBusy(true);
     setResult(null);
-    const mgmt = await plane("management", "GET", `/tenants/${tenant}`);
-    const pair = (mgmt.json as { pair_id?: string } | null)?.pair_id;
-    if (!mgmt.ok || !pair) {
-      setResult(mgmt);
-      setBusy(false);
-      return;
-    }
-    setRoute(`${pairTargets(pair).data} → agentgateway → ${tier} model`);
-    setResult(await plane(pairTargets(pair).data, "POST", `/tenants/${tenant}/chat/completions`, { tier, messages: [{ role: "user", content: prompt }] }));
+    setResult(await plane(target, "POST", `/tenants/${tenant}/chat/completions`, { tier, messages: [{ role: "user", content: prompt }] }));
     setBusy(false);
   }
 
   const chat = result?.ok ? (result.json as Chat) : null;
+  if (!tenant) return <NeedTenant />;
 
   return (
     <>
-      <PageHeader title="AI Playground" description="Chat as a tenant. Requests go Data API → agentgateway (policy, rate limit, guardrails) → model." />
+      <PageHeader title="AI Playground" description={`Chat as ${tenant}. Requests go Data API → agentgateway (policy, rate limit, guardrails) → model.`} />
+      {error && <p className="rounded-xl bg-white p-3 font-medium ring-1 ring-neutral-900">{error}</p>}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Request">
           <form className="space-y-3" onSubmit={send}>
-            <Field label="Tenant">
-              <input className={inputClass} list="tenants" value={tenant} required onChange={(e) => setTenant(e.target.value.trim())} />
-              <datalist id="tenants">
-                {known.map((t) => <option key={t} value={t} />)}
-              </datalist>
-            </Field>
             <Field label="Model tier">
               <select className={inputClass} value={tier} onChange={(e) => setTier(e.target.value)}>
                 <option value="small">small</option>
@@ -70,27 +51,27 @@ function Playground() {
             </Field>
             <div className="flex flex-wrap gap-1">
               {PRESETS.map(([label, text]) => (
-                <button type="button" key={label} className="rounded border px-2 py-0.5 text-xs" onClick={() => setPrompt(text)}>
+                <button type="button" key={label} className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs transition hover:bg-neutral-900 hover:text-white" onClick={() => setPrompt(text)}>
                   {label}
                 </button>
               ))}
             </div>
-            <Button disabled={busy || !tenant}>{busy ? "Sending…" : "Send"}</Button>
+            <Button primary disabled={busy || !target}>{busy ? "Sending…" : "Send"}</Button>
           </form>
         </Card>
         <div className="lg:col-span-2">
           <Card title="Response">
-            {!result && <p className="text-gray-500">Send a request to see the response.</p>}
-            {route && <p className="text-xs text-gray-500">Route: {route}</p>}
+            {!result && <p className="text-neutral-500">Send a request to see the response.</p>}
+            {target && <p className="text-xs text-neutral-500">Route: {target} → agentgateway → {tier} model</p>}
             {chat && (
               <>
                 <div className="flex gap-2">
                   <Badge tone="green">allowed</Badge>
-                  <span className="text-gray-600">
+                  <span className="text-neutral-600">
                     model {chat.model} · tokens {chat.usage?.prompt_tokens} in / {chat.usage?.completion_tokens} out
                   </span>
                 </div>
-                <p className="rounded bg-gray-50 p-3 whitespace-pre-wrap">{chat.message?.content}</p>
+                <p className="rounded-xl bg-neutral-50 p-4 whitespace-pre-wrap ring-1 ring-neutral-100">{chat.message?.content}</p>
               </>
             )}
             {result && !result.ok && (
@@ -107,10 +88,3 @@ function Playground() {
   );
 }
 
-export default function Page() {
-  return (
-    <Suspense>
-      <Playground />
-    </Suspense>
-  );
-}

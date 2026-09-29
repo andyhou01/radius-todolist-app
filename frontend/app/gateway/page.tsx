@@ -58,24 +58,24 @@ export default function Gateway() {
       />
       <div className="grid gap-2 md:grid-cols-4">
         {PHASES.map(([phase, text]) => (
-          <div key={phase} className="rounded border p-2">
+          <div key={phase} className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-neutral-200">
             <div className="font-medium">{phase}</div>
-            <div className="text-gray-600">{text}</div>
+            <div className="text-neutral-600">{text}</div>
           </div>
         ))}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Scenarios">
           {SCENARIOS.map((s) => (
-            <button key={s.label} disabled={busy} onClick={() => send(s)} className="block w-full rounded border px-2 py-1 text-left hover:bg-gray-50 disabled:opacity-50">
+            <button key={s.label} disabled={busy} onClick={() => send(s)} className="block w-full rounded-lg px-3 py-2 text-left ring-1 ring-neutral-200 transition hover:bg-neutral-900 hover:text-white disabled:opacity-50">
               {s.label}
             </button>
           ))}
         </Card>
         <div className="lg:col-span-2">
           <Card title="Request path">
-            {!result && <p className="text-gray-500">Pick a scenario.</p>}
-            {result && "error" in result && <p className="text-red-600">{result.error}. Is the filter demo running?</p>}
+            {!result && <p className="text-neutral-500">Pick a scenario.</p>}
+            {result && "error" in result && <p className="font-semibold">{result.error}. Is the filter demo running?</p>}
             {result && "stages" in result && (
               <>
                 <p>HTTP {result.status} · {result.durationMs} ms</p>
@@ -83,15 +83,15 @@ export default function Gateway() {
                   <tbody>
                     {result.stages.map((s) => (
                       <tr key={s.name} className="border-b last:border-0">
-                        <td className="py-1 text-gray-500">{s.phase}</td>
+                        <td className="py-1 text-neutral-500">{s.phase}</td>
                         <td>{s.name}</td>
                         <td><Badge tone={s.result === "pass" ? "green" : s.result === "block" ? "red" : "gray"}>{s.result}</Badge></td>
-                        <td className="text-gray-600">{s.detail}</td>
+                        <td className="text-neutral-600">{s.detail}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <pre className="rounded bg-gray-50 p-2 text-xs whitespace-pre-wrap">{result.body}</pre>
+                <pre className="rounded bg-neutral-50 p-2 text-xs whitespace-pre-wrap">{result.body}</pre>
               </>
             )}
           </Card>
@@ -99,7 +99,7 @@ export default function Gateway() {
       </div>
       <Card title="Reconcilers (event stream consumers)">
         {!state ? (
-          <p className="text-gray-500">Reconcilers not reachable.</p>
+          <p className="text-neutral-500">Reconcilers not reachable.</p>
         ) : (
           <div className="grid gap-4 md:grid-cols-3">
             <div>

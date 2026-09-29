@@ -55,10 +55,10 @@ export default function Tenants() {
 
   return (
     <>
-      <PageHeader title="Tenants" description="Onboard tenants through the Management plane and follow them to Control and Data." actions={<Button onClick={load}>Refresh</Button>} />
+      <PageHeader title="Tenants" description="Onboard tenants and allocate cluster pairs. Tenant configuration and runtime belong to the tenant admin and end users." actions={<Button onClick={load}>Refresh</Button>} />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="Onboard a tenant">
+        <Card title="Onboard a tenant" subtitle="Management POST /tenants">
           <form className="space-y-3" onSubmit={create}>
             <Field label="Tenant ID">
               <input className={inputClass} value={form.tenant_id} pattern="[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?" required onChange={(e) => setForm({ ...form, tenant_id: e.target.value })} />
@@ -72,8 +72,8 @@ export default function Tenants() {
             <Field label="Initial message">
               <input className={inputClass} value={form.initial_message} maxLength={1024} required onChange={(e) => setForm({ ...form, initial_message: e.target.value })} />
             </Field>
-            <Button disabled={submitting}>{submitting ? "Submitting…" : "Create tenant"}</Button>
-            {message && <p className={message.tone === "green" ? "text-green-700" : "text-red-600"}>{message.text}</p>}
+            <Button primary disabled={submitting}>{submitting ? "Submitting…" : "Create tenant"}</Button>
+            {message && <p className={message.tone === "green" ? "text-neutral-700" : "font-semibold"}>{message.text}</p>}
           </form>
         </Card>
 
@@ -95,11 +95,11 @@ export default function Tenants() {
               </form>
             }
           >
-            {rows.length === 0 && <p className="text-gray-500">No tenants yet. Create one, or open an existing tenant by ID.</p>}
+            {rows.length === 0 && <p className="text-neutral-500">No tenants yet. Create one, or open an existing tenant by ID.</p>}
             {rows.length > 0 && (
               <table className="w-full">
                 <thead>
-                  <tr className="border-b text-left text-gray-500">
+                  <tr className="border-b text-left text-neutral-500">
                     <th className="py-1">Tenant</th>
                     <th>Isolation</th>
                     <th>Cluster pair</th>
@@ -112,20 +112,20 @@ export default function Tenants() {
                   {rows.map((r) => (
                     <tr key={r.id} className="border-b last:border-0">
                       <td className="py-2">
-                        <Link className="text-blue-700 underline" href={`/tenants/${r.id}`}>
+                        <Link className="font-medium underline underline-offset-4" href={`/tenants/${r.id}`}>
                           {r.id}
                         </Link>
                       </td>
                       {r.loading ? (
-                        <td colSpan={4} className="text-gray-400">loading…</td>
+                        <td colSpan={4} className="text-neutral-400">loading…</td>
                       ) : r.error ? (
-                        <td colSpan={4} className="text-red-600 text-xs">{r.error}</td>
+                        <td colSpan={4} className="text-xs font-semibold">{r.error}</td>
                       ) : (
                         <>
                           <td>{r.isolation}</td>
                           <td>{r.pair ?? "-"}</td>
                           <td>
-                            <Badge tone={statusTone(r.provisioning)}>{r.provisioning}</Badge> <span className="text-xs text-gray-500">{r.stage}</span>
+                            <Badge tone={statusTone(r.provisioning)}>{r.provisioning}</Badge> <span className="text-xs text-neutral-500">{r.stage}</span>
                           </td>
                           <td>
                             <Badge tone={statusTone(r.onboarding)}>{r.onboarding}</Badge>
@@ -134,7 +134,7 @@ export default function Tenants() {
                       )}
                       <td className="text-right">
                         <button
-                          className="text-xs text-gray-500 underline"
+                          className="text-xs text-neutral-500 underline"
                           onClick={() => {
                             forgetTenant(r.id);
                             load();
@@ -148,7 +148,7 @@ export default function Tenants() {
                 </tbody>
               </table>
             )}
-            <p className="text-xs text-gray-500">The Management API has no list endpoint; this console remembers tenants you create or open.</p>
+            <p className="text-xs text-neutral-500">The Management API has no list endpoint; this console remembers tenants you create or open.</p>
           </Card>
         </div>
       </div>

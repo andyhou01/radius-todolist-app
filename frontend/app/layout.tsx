@@ -24,7 +24,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full bg-white text-gray-900">
+      <body className="min-h-full bg-neutral-50 text-neutral-900">
         <Shell>{children}</Shell>
       </body>
     </html>
