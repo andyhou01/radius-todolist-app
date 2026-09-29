@@ -78,6 +78,23 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None, llm_
     def increment_counter(tenant_id: TenantId):
         return serve(tenant_id, True)
 
+    @app.get("/tenants/{tenant_id}/llm/usage", dependencies=authenticated)
+    def llm_usage(tenant_id: TenantId):
+        """Requests metered by the PostRouting filter for the current onboarding."""
+        applied = applied_configuration(tenant_id)
+        key = llm_gateway.usage_key(applied.onboarding_id, tenant_id)
+        try:
+            counts = counters.hgetall(key) or {}
+            requests = {tier: int(counts.get(tier, 0)) for tier in llm_gateway.TIERS}
+        except (RedisError, ValueError, TypeError):
+            logger.warning("local_usage_unavailable")
+            raise HTTPException(503, "local_usage_unavailable") from None
+        return {
+            "tenant_id": tenant_id,
+            "onboarding_id": applied.onboarding_id,
+            "requests": requests,
+        }
+
     @app.post("/tenants/{tenant_id}/chat/completions", dependencies=authenticated)
     def chat_completion(
         tenant_id: TenantId,
@@ -92,6 +109,8 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None, llm_
             llm_gateway.TENANT_HEADER: tenant_id,
             llm_gateway.ONBOARDING_HEADER: str(applied.onboarding_id),
             llm_gateway.TIER_HEADER: request.tier,
+            # Placement is the plan input for the PreRouting policy filter.
+            llm_gateway.PAIR_HEADER: settings.pair_id,
         }
         # Continue a caller's W3C trace so gateway spans join it; drop malformed values.
         if traceparent and TRACEPARENT.fullmatch(traceparent):
@@ -112,6 +131,8 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None, llm_
             raise HTTPException(503, "llm_route_not_ready")
         if response.status_code == 400 and guardrail_rejected(response):
             raise HTTPException(400, "llm_guardrail_rejected")
+        if response.status_code == 403 and error_code(response) == llm_gateway.POLICY_CODE:
+            raise HTTPException(403, llm_gateway.POLICY_CODE)
         if response.status_code != 200:
             logger.warning("llm_gateway_rejected status=%d", response.status_code)
             raise HTTPException(502, "llm_gateway_rejected")
@@ -139,11 +160,15 @@ def create_app(settings: Settings, *, config_maps=None, counter_store=None, llm_
     return app
 
 
-def guardrail_rejected(response: httpx.Response) -> bool:
+def error_code(response: httpx.Response) -> str | None:
     try:
-        return response.json()["error"]["code"] == llm_gateway.GUARDRAIL_CODE
+        return str(response.json()["error"]["code"])
     except (ValueError, KeyError, TypeError):
-        return False
+        return None
+
+
+def guardrail_rejected(response: httpx.Response) -> bool:
+    return error_code(response) == llm_gateway.GUARDRAIL_CODE
 
 
 def main() -> None:

@@ -36,6 +36,7 @@ class Settings:
     llm_requests_per_minute: int = 60
     llm_tokens_per_minute: int = 20000
     llm_otlp_host: str = ""
+    llm_filters_host: str = ""
 
     @classmethod
     def from_env(cls, role: str) -> "Settings":
@@ -68,6 +69,9 @@ class Settings:
             llm_otlp_host=(
                 os.environ.get("LLM_OTLP_HOST", "") if role == "data_reconciler" else ""
             ),
+            llm_filters_host=(
+                os.environ.get("LLM_FILTERS_HOST", "") if role == "data_reconciler" else ""
+            ),
         )
         if api and len(settings.demo_key) < 32:
             raise ValueError("DEMO_KEY must contain at least 32 characters")
@@ -86,11 +90,13 @@ class Settings:
             r"http://[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?:[0-9]{1,5}", settings.llm_gateway_url
         ):
             raise ValueError("LLM_GATEWAY_URL must be an in-cluster http://host:port address")
-        for value in (settings.llm_backend_host, settings.llm_otlp_host):
+        for value in (settings.llm_backend_host, settings.llm_otlp_host, settings.llm_filters_host):
             if value and not re.fullmatch(
                 r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?:[0-9]{1,5}", value
             ):
-                raise ValueError("LLM_BACKEND_HOST and LLM_OTLP_HOST must be host:port")
+                raise ValueError(
+                    "LLM_BACKEND_HOST, LLM_OTLP_HOST and LLM_FILTERS_HOST must be host:port"
+                )
         for value in (settings.llm_small_model, settings.llm_large_model):
             if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
                 raise ValueError("invalid LLM model name")

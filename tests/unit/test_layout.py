@@ -99,7 +99,7 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "src"))
 for name in (
     "management.api", "control.api", "control.reconciler", "data.api",
-    "data.reconciler", "data.llm_gateway", "data.mock_llm", "setup.bootstrap",
+    "data.reconciler", "data.filters", "data.llm_gateway", "data.mock_llm", "setup.bootstrap",
     "setup.acme_responder",
 ):
     module = importlib.import_module("plane_demo." + name)

@@ -65,6 +65,9 @@ module reconciler '../modules/workload.bicep' = {
       LLM_BACKEND_HOST: {
         value: 'mock-llm:8088'
       }
+      LLM_FILTERS_HOST: {
+        value: 'llm-filters:8088'
+      }
     }, empty(otlpHost) ? {} : {
       LLM_OTLP_HOST: {
         value: otlpHost
@@ -84,6 +87,26 @@ module mockLlm '../modules/workload.bicep' = if (llmGateway) {
     entrypoint: 'plane_demo.data.mock_llm'
     serviceAccount: 'mock-llm'
     api: true
+  }
+}
+
+// PreRouting / PostRouting extAuthz filters: passport, plan policy, metering and audit.
+module filters '../modules/workload.bicep' = if (llmGateway) {
+  name: 'data-llm-filters'
+  params: {
+    application: application
+    environment: environment
+    name: 'llm-filters'
+    image: image
+    ownershipLabels: ownershipLabels
+    entrypoint: 'plane_demo.data.filters'
+    serviceAccount: 'llm-filters'
+    api: true
+    connections: {
+      redis: {
+        source: redis.id
+      }
+    }
   }
 }
 

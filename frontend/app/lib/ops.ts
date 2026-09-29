@@ -22,6 +22,7 @@ const ROUTES: [string, RegExp][] = [
   ["GET", /^\/healthz$/],
   ["POST", /^\/tenants$/],
   ["GET", new RegExp(`^/tenants/${ID}(\\?limit=\\d{1,3})?$`)],
+  ["GET", new RegExp(`^/tenants/${ID}/llm/usage$`)],
   ["PUT", new RegExp(`^/tenants/${ID}/configuration$`)],
   ["POST", new RegExp(`^/tenants/${ID}/(counter|chat/completions)$`)],
   ["GET", /^\/operations\/[0-9a-f-]{36}$/],

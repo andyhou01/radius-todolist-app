@@ -132,5 +132,5 @@ def test_compiled_applications_forward_owners_to_every_workload_and_challenge(ap
                 count += 1
 
     visit(template)
-    # data adds the optional mock-llm and agentgateway containers to its three.
-    assert count == (5 if application == "data" else 3)
+    # data adds the optional mock-llm, llm-filters and agentgateway containers to its three.
+    assert count == (6 if application == "data" else 3)

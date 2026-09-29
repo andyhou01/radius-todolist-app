@@ -20,8 +20,18 @@ CHAT_PATH = "/v1/chat/completions"
 TENANT_HEADER = "x-plane-demo-tenant"
 ONBOARDING_HEADER = "x-plane-demo-onboarding"
 TIER_HEADER = "x-plane-demo-tier"
+PAIR_HEADER = "x-plane-demo-pair"
+# Issued by the PreRouting filter and verified by the PostRouting filter.
+PASSPORT_HEADER = "x-plane-demo-passport"
 TIERS = ("small", "large")
 GUARDRAIL_CODE = "guardrail_rejected"
+POLICY_CODE = "llm_policy_denied"
+
+
+def usage_key(onboarding_id: object, tenant_id: str) -> str:
+    """Redis hash of requests per tier, metered by the PostRouting filter."""
+    return f"plane-demo:{onboarding_id}:{tenant_id}:llm-requests"
+
 
 Tier = Literal["small", "large"]
 
@@ -52,8 +62,10 @@ def _route(
     model: str,
     requests_per_minute: int,
     tokens_per_minute: int,
+    filters_host: str,
 ) -> dict:
     name = f"tenant-{item.tenant_id}-{tier}"
+    postrouting = {"extAuthz": _ext_authz(filters_host, "/postrouting")} if filters_host else {}
     return {
         "name": name,
         "matches": [
@@ -67,6 +79,7 @@ def _route(
             }
         ],
         "policies": {
+            **postrouting,
             "authorization": {
                 "rules": [
                     {"require": 'request.method == "POST"'},
@@ -119,6 +132,26 @@ def _route(
     }
 
 
+def _ext_authz(filters_host: str, path: str) -> dict:
+    """Call the data plane filters service; any filter failure denies the request."""
+    identity = [TENANT_HEADER, ONBOARDING_HEADER, TIER_HEADER]
+    if path == "/prerouting":
+        return {
+            "host": filters_host,
+            "failureMode": "deny",
+            "protocol": {
+                "http": {"path": f'"{path}"', "includeResponseHeaders": [PASSPORT_HEADER]}
+            },
+            "includeRequestHeaders": [*identity, PAIR_HEADER],
+        }
+    return {
+        "host": filters_host,
+        "failureMode": "deny",
+        "protocol": {"http": {"path": f'"{path}"'}},
+        "includeRequestHeaders": [*identity, PASSPORT_HEADER],
+    }
+
+
 def _tracing(otlp_host: str) -> dict:
     return {
         "tracing": {
@@ -142,8 +175,13 @@ def render(
     requests_per_minute: int,
     tokens_per_minute: int,
     otlp_host: str = "",
+    filters_host: str = "",
 ) -> str:
-    """Return deterministic agentgateway YAML (JSON is valid YAML), one route per tenant tier."""
+    """Return deterministic agentgateway YAML (JSON is valid YAML), one route per tenant tier.
+
+    With filters_host, PreRouting (gateway) and PostRouting (route) extAuthz policies call
+    the data plane filters service before route selection and before the model backend.
+    """
     if set(models) != set(TIERS):
         raise ValueError("a model is required for every tier")
     routes = [
@@ -154,11 +192,15 @@ def render(
             model=models[tier],
             requests_per_minute=requests_per_minute,
             tokens_per_minute=tokens_per_minute,
+            filters_host=filters_host,
         )
         for item in sorted(applied, key=lambda config: config.tenant_id)
         for tier in TIERS
     ]
-    document = {"gateways": {"default": {"port": GATEWAY_PORT}}, "routes": routes}
+    gateway: dict = {"port": GATEWAY_PORT}
+    if filters_host:
+        gateway["extAuthz"] = _ext_authz(filters_host, "/prerouting")
+    document = {"gateways": {"default": gateway}, "routes": routes}
     if otlp_host:
         document["frontendPolicies"] = _tracing(otlp_host)
     return json.dumps(document, indent=2, sort_keys=True) + "\n"

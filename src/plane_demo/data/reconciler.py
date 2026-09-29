@@ -95,6 +95,7 @@ def publish_llm_gateway(settings: Settings, maps, applied: list[AppliedConfigura
         requests_per_minute=settings.llm_requests_per_minute,
         tokens_per_minute=settings.llm_tokens_per_minute,
         otlp_host=settings.llm_otlp_host,
+        filters_host=settings.llm_filters_host,
     )
     try:
         changed = maps.write_document(

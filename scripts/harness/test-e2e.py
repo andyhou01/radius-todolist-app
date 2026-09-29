@@ -71,6 +71,7 @@ MODULES = [
     "control/reconciler",
     "data/__init__",
     "data/api",
+    "data/filters",
     "data/llm_gateway",
     "data/mock_llm",
     "data/reconciler",

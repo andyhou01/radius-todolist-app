@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTenantPlane } from "../components/tenant";
 import { Badge, Button, Card, Field, Json, NeedTenant, PageHeader, inputClass } from "../components/ui";
 import { OpResult, errorText, plane } from "../lib/client";
@@ -13,6 +13,14 @@ const PRESETS = [
 ];
 
 type Chat = { model: string; tier: string; message: { content: string }; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
+type Usage = { requests: Record<string, number> };
+
+const PHASES = [
+  ["PreRouting", "Filter issues a passport and applies the plan policy (shared pair: small tier only)"],
+  ["Route", "agentgateway selects the tenant route for the requested tier"],
+  ["PostRouting", "Filter verifies the passport, meters the request and writes an audit event"],
+  ["Backend", "Built-in guardrails reject unsafe prompts and mask PII in answers"],
+];
 
 export default function Playground() {
   const { tenant, target, error } = useTenantPlane("data");
@@ -20,6 +28,18 @@ export default function Playground() {
   const [prompt, setPrompt] = useState(PRESETS[0][1]);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<OpResult | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+
+  const loadUsage = useCallback(async () => {
+    if (!target) return;
+    const response = await plane(target, "GET", `/tenants/${tenant}/llm/usage`);
+    setUsage(response.ok ? (response.json as Usage) : null);
+  }, [target, tenant]);
+
+  useEffect(() => {
+    const timer = setTimeout(loadUsage, 0);
+    return () => clearTimeout(timer);
+  }, [loadUsage]);
 
   async function send(event?: React.FormEvent) {
     event?.preventDefault();
@@ -28,6 +48,7 @@ export default function Playground() {
     setResult(null);
     setResult(await plane(target, "POST", `/tenants/${tenant}/chat/completions`, { tier, messages: [{ role: "user", content: prompt }] }));
     setBusy(false);
+    loadUsage();
   }
 
   const chat = result?.ok ? (result.json as Chat) : null;
@@ -35,8 +56,18 @@ export default function Playground() {
 
   return (
     <>
-      <PageHeader title="AI Playground" description={`Chat as ${tenant}. Requests go Data API → agentgateway (policy, rate limit, guardrails) → model.`} />
+      <PageHeader title="AI Playground" description={`Chat as ${tenant}. Requests go Data API → agentgateway filters → model, all inside the data plane.`} />
       {error && <p className="rounded-xl bg-white p-3 font-medium ring-1 ring-neutral-900">{error}</p>}
+      <ol className="grid gap-3 md:grid-cols-4">
+        {PHASES.map(([phase, text], index) => (
+          <li key={phase} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-neutral-200">
+            <div className="text-xs font-medium uppercase tracking-widest text-neutral-400">
+              {index + 1} · {phase}
+            </div>
+            <p className="mt-1 text-neutral-600">{text}</p>
+          </li>
+        ))}
+      </ol>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Request">
           <form className="space-y-3" onSubmit={send}>
@@ -58,6 +89,16 @@ export default function Playground() {
             </div>
             <Button primary disabled={busy || !target}>{busy ? "Sending…" : "Send"}</Button>
           </form>
+          <div className="border-t border-neutral-100 pt-3">
+            <div className="text-xs text-neutral-500">Metered by PostRouting filter</div>
+            <div className="mt-1 flex gap-4 font-mono">
+              {["small", "large"].map((t) => (
+                <span key={t}>
+                  {t}: <b>{usage?.requests?.[t] ?? "-"}</b>
+                </span>
+              ))}
+            </div>
+          </div>
         </Card>
         <div className="lg:col-span-2">
           <Card title="Response">
