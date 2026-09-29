@@ -134,16 +134,40 @@ else
 fi
 kube -n radius-system rollout status deployment/applications-rp --timeout=300s >&2
 scope="/planes/radius/local/resourceGroups/$prefix/providers/Applications.Core/environments/management"
-kube get --raw "/apis/api.ucp.dev/v1alpha3$scope?api-version=2023-10-01-preview" >"$work/environment.json"
+# UCP briefly returns InternalError while applications-rp restarts after the patch.
+read_environment() {
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if kube get --raw "/apis/api.ucp.dev/v1alpha3$scope?api-version=2023-10-01-preview" \
+      >"$work/environment.json"; then
+      return 0
+    fi
+    demo_status detail "Environment read not ready (attempt $attempt); retrying"
+    sleep 5
+  done
+  demo_error 'Management environment read did not succeed after retries'
+  exit 1
+}
+read_environment
 jq -e --arg id "$scope" --arg namespace "$prefix-management" '
-  (.id|ascii_downcase)==($id|ascii_downcase) and .properties.compute.namespace==$namespace
+  (((.id // "") | tostring | ascii_downcase) == (($id // "") | tostring | ascii_downcase)) and
+  .properties.compute.namespace==$namespace
 ' "$work/environment.json" >/dev/null
 jq '.environment' "$work/plan.json" >"$work/expected-environment.json"
 if ! jq -e --slurpfile expected "$work/expected-environment.json" '
-  (.properties.recipes // {}) == {} or .properties.recipes == $expected[0].properties.recipes
+  def norm_recipes($value):
+    ($value // {})
+    | with_entries(.value |= with_entries(.value |= {
+        templateKind: (.templateKind // null),
+        templatePath: (.templatePath // null),
+        parameters: (.parameters // {})
+      }));
+  (norm_recipes(.properties.recipes) == norm_recipes($expected[0].properties.recipes))
 ' "$work/environment.json" >/dev/null; then
-  demo_error 'Existing management Recipe bindings differ; inspect their owner before changing them'
-  exit 1
+  if [[ "$mode" != apply ]]; then
+    demo_error 'Existing management Recipe bindings differ; inspect their owner before changing them'
+    exit 1
+  fi
 fi
 if [[ "$mode" == apply ]]; then
   radius workspace create kubernetes "$cluster" --context "$context" --group "$prefix" \
@@ -151,8 +175,24 @@ if [[ "$mode" == apply ]]; then
   radius resource create Applications.Core/environments management \
     --from-file "$work/expected-environment.json" --workspace "$cluster" >&2
 fi
-kube get --raw "/apis/api.ucp.dev/v1alpha3$scope?api-version=2023-10-01-preview" >"$work/environment.json"
-assets owned-object "$work/expected-environment.json" "$work/environment.json" >&2
+read_environment
+jq -e --arg id "$scope" --slurpfile expected "$work/expected-environment.json" '
+  def norm_recipes($value):
+    ($value // {})
+    | with_entries(.value |= with_entries(.value |= {
+        templateKind: (.templateKind // null),
+        templatePath: (.templatePath // null),
+        parameters: (.parameters // {})
+      }));
+  (((.id // "") | tostring | ascii_downcase) == (($id // "") | tostring | ascii_downcase)) and
+  .properties.compute.kind == "kubernetes" and
+  ((.properties.compute.resourceId // "self") == "self") and
+  .properties.compute.namespace == $expected[0].properties.compute.namespace and
+  (norm_recipes(.properties.recipes) == norm_recipes($expected[0].properties.recipes))
+' "$work/environment.json" >/dev/null || {
+  demo_error 'Existing management environment differs after reconciliation'
+  exit 1
+}
 kube get namespace kube-system -o json >"$work/recheck.json"
 jq -e --slurpfile before "$work/namespace.json" \
   '.metadata.uid == $before[0].metadata.uid' "$work/recheck.json" >/dev/null

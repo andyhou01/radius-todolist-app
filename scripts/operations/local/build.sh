@@ -65,6 +65,28 @@ assets() {
 }
 radius() { "${environment[@]}" rad --config "$work/radius.yaml" "$@"; }
 helm_cli() { "${environment[@]}" helm "$@"; }
+retry_with_backoff() {
+  local max_attempts=$1
+  local delay_seconds=$2
+  shift 2
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    local exit_code=$?
+    if (( attempt >= max_attempts )); then
+      return "$exit_code"
+    fi
+    demo_status warning "Command failed (attempt $attempt/$max_attempts), retrying in ${delay_seconds}s: $*"
+    sleep "$delay_seconds"
+    attempt=$(( attempt + 1 ))
+    # Cap simple linear backoff to keep retries bounded.
+    if (( delay_seconds < 15 )); then
+      delay_seconds=$(( delay_seconds + 3 ))
+    fi
+  done
+}
 info=$(docker_cli info --format '{{json .}}')
 arch=$(jq -er '
   select(.OperatingSystem == "Docker Desktop" and .OSType == "linux") |
@@ -121,7 +143,7 @@ build_image() {
   fi
 }
 if [[ "$stage" == build ]]; then
-  docker_cli pull --platform "linux/$arch" "$radius_base"
+  retry_with_backoff 4 3 docker_cli pull --platform "linux/$arch" "$radius_base"
   build_image "$api" images/api/Dockerfile
   build_image "$provisioner_base" images/local-provisioner/Dockerfile --build-arg "API_IMAGE=$api"
   for target in tools executor operator; do
@@ -130,7 +152,7 @@ if [[ "$stage" == build ]]; then
   done
   packaged="$work/source/scripts/operations/local/.packaged"
   mkdir -m 700 "$packaged" "$work/chart"
-  helm_cli pull oci://ghcr.io/radius-project/helm-chart/radius --version 0.60.2 \
+  retry_with_backoff 4 3 helm_cli pull oci://ghcr.io/radius-project/helm-chart/radius --version 0.60.2 \
     --destination "$work/chart"
   charts=("$work/chart/"*.tgz)
   if (( ${#charts[@]} != 1 )) || [[ ! -f "${charts[0]}" ]]; then
@@ -149,7 +171,7 @@ if [[ "$stage" == build ]]; then
   jq -er '.[]' "$work/dependencies.json" >"$work/dependency-list"
   : >"$work/pulled.jsonl"
   while IFS= read -r image; do
-    docker_cli pull --platform "linux/$arch" "$image"
+    retry_with_backoff 4 3 docker_cli pull --platform "linux/$arch" "$image"
     docker_cli image inspect "$image" | jq -ce --arg reference "$image" --arg arch "$arch" '
       select(length == 1) | .[0] | select(.Os == "linux" and .Architecture == $arch) |
       {reference:$reference,id:.Id}

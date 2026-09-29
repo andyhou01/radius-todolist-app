@@ -164,6 +164,15 @@ if [[ "$existing" == false ]]; then
   jq -er '[.images[].reference] + [.dependencies[].reference] | unique | .[]' \
     "$work/images.json" >"$work/load-images"
   while IFS= read -r image; do
+    # kind load fails on multi-platform public images (missing content digests);
+    # only locally built images are loaded, public ones are pulled by the node.
+    if [[ "$image" != localhost/* ]]; then
+      if [[ "$image" == ghcr.io/radius-project/* ]]; then
+        demo_status detail "Pre-pull $image into kind node"
+        docker_cli exec "$node" ctr --namespace k8s.io images pull "$image" >/dev/null
+      fi
+      continue
+    fi
     kind_cli load docker-image --name "$cluster" "$image"
   done <"$work/load-images"
   radius install kubernetes --chart "$work/bootstrap/radius.tgz" --kubecontext "$context" \
@@ -219,7 +228,8 @@ scope="/planes/radius/local/resourceGroups/$stem/providers/Applications.Core/env
 kube get --raw "/apis/api.ucp.dev/v1alpha3$scope?api-version=2023-10-01-preview" |
   jq -e --arg id "$scope" --arg namespace "$cluster" '
     (.id|ascii_downcase) == ($id|ascii_downcase) and
-    .properties.compute.kind == "kubernetes" and .properties.compute.resourceId == "self" and
+    .properties.compute.kind == "kubernetes" and
+    ((.properties.compute.resourceId // "self") == "self") and
     .properties.compute.namespace == $namespace
   ' >/dev/null || { demo_error 'The live management Radius environment differs'; exit 1; }
 if [[ "$existing" == false ]]; then
