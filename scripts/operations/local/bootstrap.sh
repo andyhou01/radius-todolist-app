@@ -169,7 +169,7 @@ if [[ "$existing" == false ]]; then
   radius install kubernetes --chart "$work/bootstrap/radius.tgz" --kubecontext "$context" \
     --skip-contour-install --set "dynamicrp.image=$executor" --set dashboard.enabled=false \
     --set global.terraform.enabled=false --set dynamicrp.buildkit.enabled=false \
-    --set global.terraform.loglevel=OFF
+    --set global.terraform.loglevel=OFF --set encryption.rotation.enabled=false
   socket=$(docker_cli exec "$node" stat -c '%u %g %a' /run/radplanes/docker.sock)
   [[ "$socket" =~ ^[0-9]+\ [0-9]+\ [0-7]{3,4}$ ]] || {
     demo_error 'Unexpected management socket ownership'; exit 1;

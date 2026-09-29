@@ -265,6 +265,8 @@ def install(commands: Commands) -> None:
             "global.terraform.enabled=false",
             "--set",
             "dynamicrp.buildkit.enabled=false",
+            "--set",
+            "encryption.rotation.enabled=false",
             workspace=False,
         ),
         timeout=600,

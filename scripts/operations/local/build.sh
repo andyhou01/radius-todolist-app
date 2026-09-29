@@ -139,7 +139,8 @@ if [[ "$stage" == build ]]; then
   cp "${charts[0]}" "$packaged/radius.tgz"
   helm_cli template radius "$packaged/radius.tgz" --namespace radius-system \
     --set dashboard.enabled=false --set global.terraform.enabled=false \
-    --set dynamicrp.buildkit.enabled=false --set global.terraform.loglevel=OFF |
+    --set dynamicrp.buildkit.enabled=false --set global.terraform.loglevel=OFF \
+    --set encryption.rotation.enabled=false |
     assets images "$executor" >"$work/chart-images.json"
   jq -c --arg node "$node_image" --arg python "$python_image" --arg postgres "$postgres_image" \
     --arg envoy "$envoy_image" --arg redis "$redis_image" --arg agentgateway "$agentgateway_image" \

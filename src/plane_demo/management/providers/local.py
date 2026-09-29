@@ -804,6 +804,8 @@ class LocalProvider:
             "dynamicrp.buildkit.enabled=false",
             "--set",
             "global.terraform.loglevel=OFF",
+            "--set",
+            "encryption.rotation.enabled=false",
             workspace=False,
             timeout=660,
         )
