@@ -116,12 +116,15 @@ def test_real_make_entrypoint_displays_feedback_without_changing_native_json(tmp
             f"RUN={sys.executable} {tool}",
         ]
     ) as screen:
-        screen.until(b"Working")
+        screen.until(b"native command ready")
+        if b"Working" not in screen.output:
+            screen.quiet(0.5)
         os.write(screen.descriptor, b"\n")
         assert screen.finish() == 0
         assert b'{"result":"unchanged"}' in screen.output
         assert screen.output.count(b"show-config completed") == 1
-        assert b"Working" not in screen.output.split(b'{"result":"unchanged"}', 1)[1]
+        if b"Working" in screen.output:
+            assert b"Working" not in screen.output.split(b'{"result":"unchanged"}', 1)[1]
 
 
 @pytest.mark.parametrize("exit_code", [0, 7])

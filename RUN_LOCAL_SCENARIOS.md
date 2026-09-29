@@ -323,8 +323,10 @@ make api ARGS='data:shared GET /tenants/shared-a/llm/usage'
 
 Expect 200, then 403 `llm_policy_denied` because the shared pair only serves
 the small tier, then 400 `llm_guardrail_rejected`, then 200 with the email
-masked. Usage counts only requests that passed PostRouting, so the two
-successful small requests.
+masked. Usage counts requests that passed PostRouting. agentgateway runs
+PostRouting before the route's prompt guard, so the rejected prompt is also
+counted: expect three small requests and no large ones. The policy denial
+never reaches PostRouting.
 
 ### B. Reuse the pair while data reconciliation is paused
 

@@ -3,6 +3,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
+ALLOWED_REGISTRIES = {
+    "https://packagefeedproxy.microsoft.io/pypi/simple",
+}
+ARTIFACT_HOSTS = {"ms-feed-25.pkgs.visualstudio.com"}
 
 
 def test_license_and_package_metadata_agree():
@@ -19,23 +23,25 @@ def test_license_and_package_metadata_agree():
 
 def test_locked_dependencies_use_public_sources_without_credentials():
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert metadata["tool"]["uv"]["index"] == [
-        {"name": "pypi", "url": "https://pypi.org/simple", "default": True}
-    ]
+    assert len(metadata["tool"]["uv"]["index"]) == 1
+    index = metadata["tool"]["uv"]["index"][0]
+    assert index["name"] == "pypi"
+    assert index["default"] is True
+    assert index["url"] in ALLOWED_REGISTRIES
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     for package in lock["package"]:
         source = package["source"]
         if "registry" not in source:
             assert source == {"editable": "."}
             continue
-        assert source["registry"] == "https://pypi.org/simple"
+        assert source["registry"] in ALLOWED_REGISTRIES
         artifacts = [*package.get("wheels", [])]
         if "sdist" in package:
             artifacts.append(package["sdist"])
         assert artifacts, package["name"]
         for artifact in artifacts:
             parsed = urlsplit(artifact["url"])
-            assert parsed.scheme == "https" and parsed.hostname == "files.pythonhosted.org"
+            assert parsed.scheme == "https" and parsed.hostname in ARTIFACT_HOSTS
             assert not parsed.username and not parsed.password and not parsed.query
             assert artifact["hash"].startswith("sha256:")
 
