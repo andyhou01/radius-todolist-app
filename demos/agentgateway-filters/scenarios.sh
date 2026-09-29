@@ -22,4 +22,4 @@ chat '6. Backend filter masks email in the model response' demo-key-acme \
   '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"mail me at jane@example.com"}]}'
 printf '\n== Reconciler state (meter / perf / audit), after the metrics bridge tick\n'
 sleep 6
-curl -sS ${RECONCILERS:-http://127.0.0.1:35522}/
+curl -sS "${RECONCILERS:-http://127.0.0.1:35522}/"

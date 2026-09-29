@@ -14,7 +14,6 @@ from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import redis
-
 from events import STREAM, publish
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
@@ -48,16 +47,23 @@ def audit(kind, data):
 
 def consume(group, handler):
     client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-    try:
-        client.xgroup_create(STREAM, group, id="0", mkstream=True)
-    except redis.ResponseError:
-        pass  # group already exists
     while True:
-        for _, entries in client.xreadgroup(group, group, {STREAM: ">"}, count=100, block=2000) or []:
-            for entry_id, fields in entries:
-                with lock:
-                    handler(fields["kind"], json.loads(fields["data"]))
-                client.xack(STREAM, group, entry_id)
+        try:
+            try:
+                client.xgroup_create(STREAM, group, id="0", mkstream=True)
+            except redis.ResponseError:
+                pass  # group already exists
+            while True:
+                batches = client.xreadgroup(group, group, {STREAM: ">"}, count=100, block=2000)
+                for _, entries in batches or []:
+                    for entry_id, fields in entries:
+                        with lock:
+                            handler(fields["kind"], json.loads(fields["data"]))
+                        client.xack(STREAM, group, entry_id)
+        except redis.ConnectionError as error:
+            # Redis may start after this process; keep the consumer alive and retry.
+            print(f"{group}: {error}", flush=True)
+            time.sleep(2)
 
 
 SAMPLE = re.compile(r"^(?P<name>[a-zA-Z_:][\w:]*)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>\S+)")

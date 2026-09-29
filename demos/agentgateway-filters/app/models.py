@@ -15,16 +15,26 @@ class Handler(BaseHTTPRequestHandler):
         prompt = " ".join(str(m.get("content", "")) for m in payload.get("messages", []))
         answer = f"[{PROVIDER}:{payload.get('model')}] echo: {prompt}"
         prompt_tokens, completion_tokens = len(prompt.split()), len(answer.split())
-        body = json.dumps({
-            "id": f"chatcmpl-{int(time.time() * 1000)}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": payload.get("model"),
-            "choices": [{"index": 0, "finish_reason": "stop",
-                         "message": {"role": "assistant", "content": answer}}],
-            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-                      "total_tokens": prompt_tokens + completion_tokens},
-        }).encode()
+        body = json.dumps(
+            {
+                "id": f"chatcmpl-{int(time.time() * 1000)}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": payload.get("model"),
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": answer},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                },
+            }
+        ).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

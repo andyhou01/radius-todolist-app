@@ -30,8 +30,12 @@ VENDOR_MODELS = {"vendor-large"}
 GUARDRAILS = [
     ("pii.ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
     ("secret.credential", re.compile(r"(?i)(password|api[_-]?key|secret|token)\s*[=:]\s*\S+")),
-    ("prompt.injection", re.compile(r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+instructions")),
+    (
+        "prompt.injection",
+        re.compile(r"(?i)ignore\s+(all\s+)?(previous|prior|above)\s+instructions"),
+    ),
 ]
+PASSPORT_TTL = 60
 
 
 def sign(claims: dict) -> str:
@@ -45,7 +49,13 @@ def verify(passport: str) -> dict | None:
     expected = hmac.new(SECRET, body.encode(), hashlib.sha256).hexdigest()
     if not mac or not hmac.compare_digest(mac, expected):
         return None
-    return json.loads(base64.urlsafe_b64decode(body))
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body))
+    except ValueError:
+        return None
+    if not isinstance(claims, dict) or time.time() - claims.get("iat", 0) > PASSPORT_TTL:
+        return None
+    return claims
 
 
 def prerouting(headers, body: bytes) -> tuple[int, dict, dict]:
@@ -57,13 +67,16 @@ def prerouting(headers, body: bytes) -> tuple[int, dict, dict]:
         return 403, {}, {"error": "unknown_tenant"}
     try:
         payload = json.loads(body or b"{}")
-    except ValueError:
-        return 400, {}, {"error": "invalid_json"}
+        max_tokens = int(payload.get("max_tokens") or 0)
+    except (ValueError, TypeError, AttributeError):
+        return 400, {}, {"error": "invalid_request"}
     model = str(payload.get("model", ""))
     base = {"request_id": request_id, "tenant": tenant, "tier": profile["tier"], "model": model}
 
     # Guardrails
-    text = " ".join(str(m.get("content", "")) for m in payload.get("messages", []) if isinstance(m, dict))
+    messages = payload.get("messages")
+    messages = messages if isinstance(messages, list) else []
+    text = " ".join(str(m.get("content", "")) for m in messages if isinstance(m, dict))
     for rule, pattern in GUARDRAILS:
         if pattern.search(text):
             publish("guardrail", {**base, "rule": rule, "decision": "reject"})
@@ -76,7 +89,7 @@ def prerouting(headers, body: bytes) -> tuple[int, dict, dict]:
     reason = None
     if target not in profile["targets"]:
         reason = f"tier {profile['tier']} cannot use {target} models"
-    elif int(payload.get("max_tokens") or 0) > profile["max_tokens"]:
+    elif max_tokens > profile["max_tokens"]:
         reason = f"max_tokens exceeds {profile['max_tokens']}"
     if reason:
         publish("policy", {**base, "target": target, "decision": "deny", "reason": reason})
@@ -84,21 +97,31 @@ def prerouting(headers, body: bytes) -> tuple[int, dict, dict]:
     publish("policy", {**base, "target": target, "decision": "allow"})
 
     passport = sign({**base, "target": target, "iat": int(time.time())})
-    return 200, {
-        "x-passport": passport,
-        "x-tenant": tenant,
-        "x-tier": profile["tier"],
-        "x-route-target": target,
-        "x-request-id": request_id,
-    }, {}
+    return (
+        200,
+        {
+            "x-passport": passport,
+            "x-tenant": tenant,
+            "x-tier": profile["tier"],
+            "x-route-target": target,
+            "x-request-id": request_id,
+        },
+        {},
+    )
 
 
 def postrouting(headers) -> tuple[int, dict, dict]:
     claims = verify(headers.get("x-passport", ""))
     if claims is None or claims.get("target") != headers.get("x-route-target"):
         return 403, {}, {"error": "invalid_passport"}
-    publish("audit", {**{k: claims[k] for k in ("request_id", "tenant", "tier", "model", "target")},
-                      "phase": "postrouting", "at": time.time()})
+    publish(
+        "audit",
+        {
+            **{k: claims[k] for k in ("request_id", "tenant", "tier", "model", "target")},
+            "phase": "postrouting",
+            "at": time.time(),
+        },
+    )
     return 200, {}, {}
 
 
