@@ -218,6 +218,8 @@ elif tool == "kubectl":
         if state.get("interrupt_etcd"):
             (root / "interrupt-ready").write_text("ready")
             time.sleep(60)
+        if state.get("interrupted_status"):
+            sys.exit(state["interrupted_status"])
         payload = b"plain-secret" if state.get("plaintext") else (
             b"k8s:enc:aescbc:v1:local-key:" + b"\x01\xffsynthetic-ciphertext")
         output({"kvs": [{"key": base64.b64encode(key.encode()).decode(),
@@ -861,6 +863,16 @@ def test_failed_interrupt_cleanup_does_not_replace_signal_exit_status(node_lab):
     assert result.returncode == 143, result.stderr
     assert "Node encryption cleanup failed:" in result.stderr
     assert "probe" in state(node_lab)
+
+
+@pytest.mark.parametrize("number", [130, 143])
+def test_child_interrupt_status_is_kept_when_it_wins_the_race_with_the_trap(node_lab, number):
+    update(node_lab, interrupted_status=number)
+    result = invoke(node_lab)
+    assert result.returncode == number, result.stderr
+    assert "Node encryption failed:" not in result.stderr
+    assert state(node_lab)["probe_deletes"] == 1
+    assert "probe" not in state(node_lab)
 
 
 def running(pid):

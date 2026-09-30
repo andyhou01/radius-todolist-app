@@ -157,6 +157,11 @@ elif tool == "docker":
         if args[2:6] == ["ctr", "--namespace", "k8s.io", "images"] and args[6] == "pull":
             state.setdefault("pulled", []).append(args[-1]); save()
             print("visible-node-pull-output")
+        elif args[2:6] == ["ctr", "--namespace", "k8s.io", "images"] and args[6] == "tag":
+            source = args[-2]
+            target = args[-1]
+            state.setdefault("tagged", []).append({"source": source, "target": target}); save()
+            print("visible-node-tag-output")
         else:
             assert args[2] == "stat"
             print("0 0 660")

@@ -162,12 +162,11 @@ if ! jq -e --slurpfile expected "$work/expected-environment.json" '
         templatePath: (.templatePath // null),
         parameters: (.parameters // {})
       }));
+  (.properties.recipes // {}) == {} or
   (norm_recipes(.properties.recipes) == norm_recipes($expected[0].properties.recipes))
 ' "$work/environment.json" >/dev/null; then
-  if [[ "$mode" != apply ]]; then
-    demo_error 'Existing management Recipe bindings differ; inspect their owner before changing them'
-    exit 1
-  fi
+  demo_error 'Existing management Recipe bindings differ; inspect their owner before changing them'
+  exit 1
 fi
 if [[ "$mode" == apply ]]; then
   radius workspace create kubernetes "$cluster" --context "$context" --group "$prefix" \

@@ -115,10 +115,23 @@ while IFS= read -r image; do
             ;;
         *)
             # Multi-platform public images save as an OCI index without platform
-            # content, so the child pulls the same digest-pinned reference itself.
+            # content, so the child pulls them itself. Tag-only references are
+            # pinned to the prepared ID (the index digest) and then tagged.
             pull_ref=$image
             case "$pull_ref" in
                 kindest/*) pull_ref="docker.io/$pull_ref" ;;
+            esac
+            tag_ref=
+            case "$pull_ref" in
+                *@sha256:*) ;;
+                *)
+                    case "$expected" in
+                        sha256:*) ;;
+                        *) echo "Prepared image ID is not a digest: $image" >&2; exit 1 ;;
+                    esac
+                    tag_ref=$pull_ref
+                    pull_ref="${pull_ref%:*}@$expected"
+                    ;;
             esac
             docker exec "$node" ctr --namespace k8s.io images pull "$pull_ref" > /dev/null &
             consumer=$!
@@ -126,17 +139,25 @@ while IFS= read -r image; do
             wait "$consumer" || pulled=$?
             consumer=
             [ "$pulled" -eq 0 ] || { echo "Image pull failed in child: $image" >&2; exit 1; }
-            # ctr may normalize pulled refs; enforce strict ref presence only for
-            # stream-imported localhost images.
             verify_loaded_ref=no
+            if [ -n "$tag_ref" ]; then
+                docker exec "$node" ctr --namespace k8s.io images tag --force "$pull_ref" "$tag_ref" > /dev/null &
+                consumer=$!
+                tagged=0
+                wait "$consumer" || tagged=$?
+                consumer=
+                [ "$tagged" -eq 0 ] || { echo "Image tag failed in child: $image" >&2; exit 1; }
+                image=$tag_ref
+                verify_loaded_ref=yes
+            fi
             ;;
     esac
     if [ "$verify_loaded_ref" = yes ]; then
-        docker exec "$node" ctr --namespace k8s.io images list > "$work/loaded" &
+        docker exec "$node" ctr --namespace k8s.io images list --quiet > "$work/loaded" &
         consumer=$!
         wait "$consumer"
         consumer=
-        grep -F -x -- "$image" "$work/loaded" >/dev/null || grep -F -- "$expected" "$work/loaded" >/dev/null || {
+        grep -F -x -- "$image" "$work/loaded" >/dev/null || {
             echo "Imported image reference is absent from the child" >&2; exit 1
         }
     fi

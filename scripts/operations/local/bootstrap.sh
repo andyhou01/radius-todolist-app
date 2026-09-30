@@ -176,15 +176,19 @@ if [[ "$existing" == false ]]; then
   docker_cli cp "$copy_container:/opt/radplanes/bootstrap/." "$work/bootstrap"
   docker_cli rm "$copy_container" >/dev/null
   copy_container=''
-  jq -er '[.images[].reference] + [.dependencies[].reference] | unique | .[]' \
+  jq -er '[.images[], .dependencies[]] | unique_by(.reference) | .[] | [.reference, .id] | @tsv' \
     "$work/images.json" >"$work/load-images"
-  while IFS= read -r image; do
+  while IFS=$'\t' read -r image id; do
     # kind load fails on multi-platform public images (missing content digests);
     # only locally built images are loaded, public ones are pulled by the node.
     if [[ "$image" != localhost/* ]]; then
       if [[ "$image" == ghcr.io/radius-project/* ]]; then
+        # Tag-only references are pinned to the inspected ID (the index digest).
+        [[ "$id" =~ ^sha256:[a-f0-9]{64}$ ]] || { demo_error "Unpinned image $image"; exit 1; }
         demo_status detail "Pre-pull $image into kind node"
-        docker_cli exec "$node" ctr --namespace k8s.io images pull "$image" >/dev/null
+        docker_cli exec "$node" ctr --namespace k8s.io images pull "${image%:*}@$id" >/dev/null
+        docker_cli exec "$node" ctr --namespace k8s.io images tag --force \
+          "${image%:*}@$id" "$image" >/dev/null
       fi
       continue
     fi

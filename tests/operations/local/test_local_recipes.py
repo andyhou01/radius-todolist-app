@@ -325,7 +325,7 @@ def test_image_copy_runpath_targets_only_created_owned_child(docker_double, slot
             f"docker.io/{common.NODE_IMAGE}",
         ]
     ]
-    assert sum(command[-2:] == ["images", "list"] for command in commands) == 3
+    assert sum(command[-3:] == ["images", "list", "--quiet"] for command in commands) == 3
     assert all("create" not in command and "run" not in command for command in commands)
 
 

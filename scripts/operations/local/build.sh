@@ -71,10 +71,9 @@ retry_with_backoff() {
   shift 2
   local attempt=1
   while true; do
-    if "$@"; then
-      return 0
-    fi
-    local exit_code=$?
+    local exit_code=0
+    "$@" || exit_code=$?
+    (( exit_code != 0 )) || return 0
     if (( attempt >= max_attempts )); then
       return "$exit_code"
     fi

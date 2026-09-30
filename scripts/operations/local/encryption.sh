@@ -8,7 +8,13 @@
 set +x
 set -euo pipefail
 
-fail() { printf 'Node encryption failed: %s\n' "$1" >&2; exit 1; }
+fail() {
+    local status=$?
+    # A command stopped by an operator interrupt can return before this shell runs
+    # its own INT/TERM trap. Keep the signal status instead of reporting a failure.
+    ((status == 130 || status == 143)) && exit "$status"
+    printf 'Node encryption failed: %s\n' "$1" >&2; exit 1
+}
 usage() {
     printf '%s\n' 'Usage: bash encryption.sh --cluster NAME --node NAME --kubeconfig FILE --context NAME [--docker-host unix:///PATH]'
 }
