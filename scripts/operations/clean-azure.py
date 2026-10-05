@@ -1184,11 +1184,61 @@ class LiveClusterCleanup:
                 result.append(item)
         return result
 
+    def resource_details(self, slot, item):
+        """The generic Radius list returns identity only; read each owner's properties."""
+        if isinstance(item.get("properties"), dict):
+            return item
+        kind = item["type"]
+        version = (
+            "2025-08-01-preview"
+            if kind.lower().startswith("demo.platform/")
+            else "2023-10-01-preview"
+        )
+        value = json.loads(
+            self.kube(
+                slot,
+                "get",
+                "--raw",
+                f"/apis/api.ucp.dev/v1alpha3{item['id']}?api-version={version}",
+            )
+        )
+        require(
+            isinstance(value, dict)
+            and same_id(value.get("id"), item["id"])
+            and str(value.get("type", "")).lower() == kind.lower()
+            and value.get("name") == item["name"]
+            and isinstance(value.get("properties"), dict),
+            "Radius resource details differ from its inventory entry",
+        )
+        return {**item, "properties": value["properties"]}
+
+    def radius_absent(self, slot):
+        """True only for a child whose provisioning stopped before Radius was installed."""
+        if slot == "management":
+            return False
+        raw = self.kube(
+            slot, "get", "namespace", "radius-system", "--ignore-not-found", "-o", "json"
+        )
+        if raw.strip():
+            return False
+        groups = json.loads(self.kube(slot, "get", "--raw", "/apis")).get("groups")
+        require(
+            isinstance(groups, list)
+            and all(isinstance(group, dict) for group in groups)
+            and not any(group.get("name") == "api.ucp.dev" for group in groups)
+            and self.namespace(slot) is None,
+            "Child Radius state is partial; inspect it before cleanup",
+        )
+        return True
+
     def inventory(self, slot):
         self.verify_cluster(slot)
+        if self.radius_absent(slot):
+            self.note("child-radius-absent", slot)
+            return {"apps": [], "resources": [], "children": {}, "radiusAbsent": True}
         role = "management" if slot == "management" else slot.rsplit("-", 1)[1]
         apps = self.rows(self.rad(slot, "app", "list"))
-        resources = self.native_resources(slot)
+        resources = [self.resource_details(slot, item) for item in self.native_resources(slot)]
         allowed = {role} | (
             {f"cluster-{child}" for child in self.children} if slot == "management" else set()
         )
@@ -1380,7 +1430,7 @@ class LiveClusterCleanup:
 
         self.verify_cluster("management")
         current = [
-            item
+            self.resource_details("management", item)
             for item in self.native_resources("management")
             if same_id(item["id"], record["id"])
         ]
@@ -2293,10 +2343,13 @@ class LiveAzureCleanup(LiveClusterCleanup):
                     require(same_id(tags.get(key), value), "Application owner tags differ")
 
     def child_apps_absent(self, slot):
-        require(
-            not self.rows(self.rad(slot, "app", "list")) and not self.native_resources(slot),
-            "Child Radius workloads remain",
-        )
+        if self.inventories[slot].get("radiusAbsent"):
+            require(self.radius_absent(slot), "Child Radius appeared during cleanup")
+        else:
+            require(
+                not self.rows(self.rad(slot, "app", "list")) and not self.native_resources(slot),
+                "Child Radius workloads remain",
+            )
         remaining = self.application_resources(slot)
         require(
             not remaining,

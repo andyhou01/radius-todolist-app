@@ -231,6 +231,52 @@ def validate_cluster_payload(
     return attrs
 
 
+def validate_failed_cluster_payload(state, cluster_name):
+    """Prove a child whose Recipe failed before its access Secret is owned by this state."""
+    terraform_envelope(state)
+    managed = [entry for entry in state["resources"] if entry["mode"] == "managed"]
+    owners = {(entry.get("type"), entry.get("name")): entry for entry in managed}
+    require(
+        len(owners) == len(managed)
+        and ("kind_cluster", "child") in owners
+        and set(owners) <= {("kind_cluster", "child"), ("terraform_data", "images")},
+        "Failed Recipe state contains missing, extra, or foreign managed resources",
+    )
+    for key, entry in owners.items():
+        instances = entry.get("instances")
+        require(
+            entry.get("module") == "module.default"
+            and isinstance(instances, list)
+            and len(instances) == 1
+            and not instances[0].get("deposed")
+            # Only the image-load step, where the Recipe failed, may be tainted.
+            and (not instances[0].get("status") or key == ("terraform_data", "images")),
+            "Failed Recipe state ownership is partial or deposed",
+        )
+    kind = owners["kind_cluster", "child"]
+    require(
+        kind.get("provider")
+        in {
+            'provider["registry.terraform.io/tehcyx/kind"]',
+            'module.default.provider["registry.terraform.io/tehcyx/kind"]',
+        },
+        "Failed Recipe kind provider differs",
+    )
+    attrs = kind["instances"][0]["attributes"]
+    require(
+        attrs.get("name") == cluster_name
+        and attrs.get("id") == f"{cluster_name}-{NODE_IMAGE}"
+        and attrs.get("node_image") == NODE_IMAGE
+        and attrs.get("completed") is True
+        and isinstance(attrs.get("kubeconfig"), str)
+        and attrs["kubeconfig"]
+        and isinstance(attrs.get("client_key"), str)
+        and attrs["client_key"],
+        "Terraform does not describe the completed, owned child",
+    )
+    return attrs
+
+
 APPLICATION_STATE_OWNERS = {
     "Demo.Platform/postgreSqlDatabases": {
         ("random_password", "server"): None,
@@ -1299,6 +1345,8 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
         self.host = None
         self.nodes, self.states, self.access = {}, {}, {}
         self.state_proofs = {}
+        # Children whose cluster Recipe failed after creating kind, before Radius outputs.
+        self.failed_children = set()
         self.initial_unrelated = None
 
     def check_bootstrap_lease(self):
@@ -1421,6 +1469,15 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
             "Radius child points at another kind owner",
         )
         if slot in self.nodes:
+            if (
+                properties.get("provisioningState") == "Failed"
+                and not properties.get("clusterId")
+                and not properties.get("clusterName")
+                and not properties.get("bootstrapAccessRef")
+            ):
+                # Its Terraform state must prove ownership before Radius deletes it.
+                self.failed_children.add(slot)
+                return
             require(
                 properties.get("clusterId") == "kind://" + name
                 and bool(properties.get("bootstrapAccessRef")),
@@ -1524,8 +1581,14 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
         for slot in owners:
             self.access[slot] = self.access_secret(slot)
             require(
-                slot not in clusters or self.access[slot] is not None,
+                slot not in clusters
+                or self.access[slot] is not None
+                or slot in self.failed_children,
                 "Live child has no Radius-owned access Secret",
+            )
+            require(
+                slot not in self.failed_children or self.access[slot] is None,
+                "Failed child Recipe unexpectedly has an access Secret",
             )
         require(
             self.access_inventory()
@@ -1613,21 +1676,28 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
         try:
             selected = yaml.safe_load(self.targets[child]["kubeconfig"].read_text())
             original = yaml.safe_load(attributes["kubeconfig"])
-            fields = self.kube(
-                "management",
-                "get",
-                "secret",
-                self.config.slot_name(child) + "-access",
-                "-o",
-                'jsonpath={.metadata.uid}{"\\n"}{.data.kubeconfig}',
-                namespace=self.config.stem + "-access",
-            ).splitlines()
-            require(
-                len(fields) == 2 and fields[0] == self.access[child],
-                "Child access Secret changed during payload verification",
-            )
-            tracked = yaml.safe_load(base64.b64decode(fields[1], validate=True))
-            for value in (selected, original, tracked):
+            tracked = None
+            if child in self.failed_children:
+                require(
+                    self.access.get(child) is None and self.access_secret(child) is None,
+                    "Failed child Recipe unexpectedly has an access Secret",
+                )
+            else:
+                fields = self.kube(
+                    "management",
+                    "get",
+                    "secret",
+                    self.config.slot_name(child) + "-access",
+                    "-o",
+                    'jsonpath={.metadata.uid}{"\\n"}{.data.kubeconfig}',
+                    namespace=self.config.stem + "-access",
+                ).splitlines()
+                require(
+                    len(fields) == 2 and fields[0] == self.access[child],
+                    "Child access Secret changed during payload verification",
+                )
+                tracked = yaml.safe_load(base64.b64decode(fields[1], validate=True))
+            for value in (selected, original, *([tracked] if tracked is not None else [])):
                 require(
                     isinstance(value, dict)
                     and len(value["contexts"])
@@ -1642,8 +1712,13 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
                 original["clusters"][0]["cluster"]["certificate-authority-data"] == ca
                 and original["users"][0]["user"] == user
                 and attributes["client_key"].encode()
-                == base64.b64decode(user["client-key-data"], validate=True)
-                and tracked["clusters"][0]["cluster"]["certificate-authority-data"] == ca
+                == base64.b64decode(user["client-key-data"], validate=True),
+                "Terraform kind credentials do not match the owned child access",
+            )
+            if tracked is None:
+                return
+            require(
+                tracked["clusters"][0]["cluster"]["certificate-authority-data"] == ca
                 and tracked["users"][0]["user"] == user
                 and tracked["current-context"] == self.config.slot_name(child)
                 and tracked["clusters"][0]["cluster"].get("tls-server-name")
@@ -1668,12 +1743,15 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
             state, proof = self.read_state_payload(slot, name)
             if resource["type"] == "Demo.Platform/clusters":
                 child = resource["properties"]["slot"]
-                attrs = validate_cluster_payload(
-                    state,
-                    self.config.slot_name(child),
-                    self.config.stem + "-access",
-                    self.cluster_images(resource),
-                )
+                if child in self.failed_children:
+                    attrs = validate_failed_cluster_payload(state, self.config.slot_name(child))
+                else:
+                    attrs = validate_cluster_payload(
+                        state,
+                        self.config.slot_name(child),
+                        self.config.stem + "-access",
+                        self.cluster_images(resource),
+                    )
                 self.validate_child_credentials(child, attrs)
             else:
                 validate_application_payload(state, resource["type"], self.config.namespace(slot))
@@ -1692,10 +1770,14 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
         return super().rad(slot, *args, mutation=mutation)
 
     def child_apps_absent(self, slot):
+        if self.inventories[slot].get("radiusAbsent"):
+            radius_empty = self.radius_absent(slot)
+        else:
+            radius_empty = not self.rows(
+                self.rad(slot, "app", "list")
+            ) and not self.native_resources(slot)
         require(
-            not self.rows(self.rad(slot, "app", "list"))
-            and not self.native_resources(slot)
-            and not self.state_inventory(slot),
+            radius_empty and not self.state_inventory(slot),
             "Child Radius or Terraform owners remain",
         )
         nodes, _ = self.containers()
@@ -1791,6 +1873,9 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
             )
             sandbox = self.json(self.docker("exec", node["Id"], "crictl", "inspectp", item["id"]))
             status, info = sandbox["status"], sandbox["info"]
+            if status.get("state") == "SANDBOX_NOTREADY":
+                self.check_stopped_sandbox(node, item, metadata, status, info)
+                continue
             require(
                 status["id"] == item["id"]
                 and status["metadata"] == metadata
@@ -1822,6 +1907,34 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
                 )
             )
             require("plane-demo-fault-" not in rules, "Active parent fault must be restored first")
+
+    def check_stopped_sandbox(self, node, item, metadata, status, info):
+        # A node restart leaves the previous sandbox NotReady. Without a process or its
+        # network namespace, it cannot hold a parent-link fault rule.
+        namespaces = info.get("runtimeSpec", {}).get("linux", {}).get("namespaces", [])
+        paths = [value.get("path") for value in namespaces if value.get("type") == "network"]
+        require(
+            status["id"] == item["id"]
+            and status["metadata"] == metadata
+            and status["labels"].get("io.kubernetes.pod.uid") == metadata["uid"]
+            and info.get("pid") == 0
+            and len(paths) == 1
+            and isinstance(paths[0], str)
+            and re.fullmatch(r"/var/run/netns/cni-[0-9a-f-]{36}", paths[0]),
+            "Stopped reconciler sandbox is not verified",
+        )
+        presence = self.call(
+            self.docker(
+                "exec",
+                node["Id"],
+                "sh",
+                "-c",
+                'if [ -e "$1" ]; then echo present; else echo absent; fi',
+                "cleanup-netns",
+                paths[0],
+            )
+        ).strip()
+        require(presence == "absent", "Stopped reconciler sandbox still has a network namespace")
 
     def clean(self):
         self.nodes, self.initial_unrelated = self.containers()

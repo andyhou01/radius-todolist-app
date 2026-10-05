@@ -26,6 +26,7 @@ local = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = local
 spec.loader.exec_module(local)
 shared = local.live_support()
+STALE_NETNS = "/var/run/netns/cni-11111111-2222-3333-4444-555555555555"
 
 
 def uid(name):
@@ -42,9 +43,16 @@ class Platform:
         self.leave_management_app_resources = False
         self.extra_state = False
         self.app_namespaces = True
+        # Children whose provisioning stopped before Radius was installed.
+        self.radius_missing = set()
+        # Radius 0.60 lists generic resources by id, name and type only.
+        self.identity_only = False
         self.foreign = None
         self.active_fault = False
         self.active_rule = False
+        # A NotReady sandbox left by a node restart: None, "absent" or "present" netns.
+        self.stale_sandbox = None
+        self.fault_rules = True
         self.bootstrap_lease = None
         self.clock = 0
         self.apps, self.resources, self.states, self.access = {}, {}, {}, {}
@@ -646,6 +654,8 @@ class Platform:
         elif argv[0] == "rad":
             slot = self.slot(argv[argv.index("--workspace") + 1])
             assert argv[argv.index("--group") + 1] == self.config.stem
+            if slot in self.radius_missing:
+                return subprocess.CompletedProcess(argv, 1, "", "no Radius installation")
             args = argv[3:]
             if args[:2] == ["app", "list"]:
                 value = self.apps[slot]
@@ -729,11 +739,39 @@ class Platform:
                     json.dumps(self.bootstrap_lease) if self.bootstrap_lease is not None else "",
                     "",
                 )
+            elif args[:2] == ["--raw", "/apis"]:
+                groups = [{"name": "apps"}]
+                if slot not in self.radius_missing:
+                    groups.append({"name": "api.ucp.dev"})
+                value = {"groups": groups}
+            elif args[0] == "--raw" and "/resources?" not in args[1]:
+                identifier = args[1].removeprefix("/apis/api.ucp.dev/v1alpha3").split("?")[0]
+                value = next(
+                    item
+                    for item in self.resources[slot]
+                    if item["id"].lower() == identifier.lower()
+                )
             elif args[0] == "--raw":
-                value = {"value": self.resources[slot]}
+                value = {
+                    "value": [
+                        {key: item[key] for key in ("id", "name", "type")}
+                        if self.identity_only
+                        else item
+                        for item in self.resources[slot]
+                    ]
+                }
             elif args[:2] == ["namespace", "kube-system"]:
                 value = {
                     "metadata": {"name": "kube-system", "uid": uid(self.config.slot_name(slot))}
+                }
+            elif args[:2] == ["namespace", "radius-system"]:
+                if slot in self.radius_missing:
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+                value = {
+                    "metadata": {
+                        "name": "radius-system",
+                        "uid": uid(self.config.slot_name(slot) + "-radius"),
+                    }
                 }
             elif args[0] == "namespace":
                 if not self.app_namespaces:
@@ -801,7 +839,11 @@ class Platform:
                     else ""
                 )
                 return subprocess.CompletedProcess(argv, 0, output, "")
-            elif args[0] == "pods" and self.active_rule and slot == "shared-data":
+            elif (
+                args[0] == "pods"
+                and (self.active_rule or self.stale_sandbox)
+                and slot == "shared-data"
+            ):
                 value = {"items": [self.fault_pod(slot)]}
             elif args[0] == "deployment":
                 component = args[1]
@@ -884,11 +926,39 @@ class Platform:
                         key: self.fault_pod(slot)["metadata"][key]
                         for key in ("name", "namespace", "uid")
                     }
-                    value = {
-                        "items": [{"id": "a" * 64, "metadata": metadata}]
-                        if self.active_rule and slot == "shared-data"
-                        else []
+                    items = []
+                    if (self.active_rule or self.stale_sandbox) and slot == "shared-data":
+                        items.append({"id": "a" * 64, "metadata": metadata})
+                    if self.stale_sandbox and slot == "shared-data":
+                        items.append({"id": "b" * 64, "metadata": metadata})
+                    value = {"items": items}
+                elif command[:2] == ["crictl", "inspectp"] and command[2] == "b" * 64:
+                    metadata = {
+                        key: self.fault_pod(slot)["metadata"][key]
+                        for key in ("name", "namespace", "uid")
                     }
+                    value = {
+                        "status": {
+                            "id": "b" * 64,
+                            "metadata": metadata,
+                            "state": "SANDBOX_NOTREADY",
+                            "labels": {"io.kubernetes.pod.uid": metadata["uid"]},
+                        },
+                        "info": {
+                            "pid": 0,
+                            "runtimeSpec": {
+                                "linux": {
+                                    "namespaces": [
+                                        {"type": "pid"},
+                                        {"type": "network", "path": STALE_NETNS},
+                                    ]
+                                }
+                            },
+                        },
+                    }
+                elif command[:2] == ["sh", "-c"]:
+                    assert command[3:] == ["cleanup-netns", STALE_NETNS]
+                    return subprocess.CompletedProcess(argv, 0, self.stale_sandbox + "\n", "")
                 elif command[:2] == ["crictl", "inspectp"]:
                     metadata = {
                         key: self.fault_pod(slot)["metadata"][key]
@@ -910,13 +980,10 @@ class Platform:
                     assert 'exec 3<"/proc/$pid/ns/net"' in command[2]
                     assert command[4:6] == ["123", "4026532000"]
                     assert command[6:] == ["iptables", "-w", "2", "-S", "OUTPUT"]
-                    return subprocess.CompletedProcess(
-                        argv,
-                        0,
-                        "-P OUTPUT ACCEPT\n"
-                        "-A OUTPUT -m comment --comment plane-demo-fault-foreign -j DROP\n",
-                        "",
-                    )
+                    rules = "-P OUTPUT ACCEPT\n"
+                    if self.fault_rules:
+                        rules += "-A OUTPUT -m comment --comment plane-demo-fault-foreign -j DROP\n"
+                    return subprocess.CompletedProcess(argv, 0, rules, "")
         elif argv[0] == "kind":
             assert argv[1:3] == ["delete", "cluster"]
             assert argv[argv.index("--name") + 1] == self.config.slot_name("management")
@@ -1470,6 +1537,131 @@ def test_local_cleanup_detects_live_fault_rules_without_a_host_or_cluster_journa
         engine.clean()
     assert platform.mutations == []
     assert any("iptables" in argv for argv, _ in platform.calls)
+
+
+@pytest.mark.parametrize("world", ["local"], indirect=True)
+@pytest.mark.parametrize("netns", ["absent", "present"])
+def test_local_cleanup_accepts_only_stopped_sandboxes_without_a_network_namespace(world, netns):
+    engine, platform, _ = world
+    platform.stale_sandbox, platform.fault_rules = netns, False
+    if netns == "absent":
+        assert engine.clean()["status"] == "clean"
+        assert any("iptables" in argv for argv, _ in platform.calls)
+        assert any("b" * 64 in argv for argv, _ in platform.calls)
+        assert any(STALE_NETNS in argv for argv, _ in platform.calls)
+    else:
+        with pytest.raises(local.LocalError, match="still has a network namespace"):
+            engine.clean()
+        assert platform.mutations == []
+
+
+def test_cleanup_reads_owner_properties_when_radius_lists_identity_only(world):
+    engine, platform, _ = world
+    platform.app_namespaces, platform.identity_only = False, True
+    assert engine.clean()["status"] == "clean"
+    reads = [
+        argv[argv.index("--raw") + 1]
+        for argv, _ in platform.calls
+        if argv[0] == "kubectl" and "--raw" in argv
+    ]
+    owners = [url for url in reads if "/resources?" not in url and url != "/apis"]
+    assert any(
+        "/providers/Demo.Platform/clusters/" in url
+        and url.endswith("?api-version=2025-08-01-preview")
+        for url in owners
+    )
+    assert any(
+        "/providers/Applications." in url and url.endswith("?api-version=2023-10-01-preview")
+        for url in owners
+    )
+
+
+def without_child_radius(platform, child="isolated-1-data"):
+    platform.radius_missing.add(child)
+    platform.apps[child], platform.resources[child], platform.states[child] = [], [], {}
+    platform.payloads[child] = {}
+
+
+@pytest.mark.parametrize("world", ["local"], indirect=True)
+def test_cleanup_removes_a_child_that_never_received_radius(world):
+    engine, platform, _ = world
+    platform.app_namespaces = False
+    without_child_radius(platform)
+    assert engine.clean()["status"] == "clean"
+    assert {"action": "child-radius-absent", "identity": "isolated-1-data"} in engine.steps
+    apps = [name for kind, name in platform.mutations if kind == "app"]
+    assert "isolated-1-data/data" not in apps
+    assert "isolated-1-data" in [
+        name for kind, name in platform.mutations if kind == "radius-child"
+    ]
+
+
+def test_cleanup_refuses_child_radius_that_is_only_partly_absent(world):
+    engine, platform, _ = world
+    without_child_radius(platform)
+    with pytest.raises(shared.CleanupError, match="Child Radius state is partial"):
+        engine.clean()
+    assert platform.mutations == []
+
+
+def fail_child_recipe(platform, child="isolated-1-data"):
+    """The kind Recipe created the node, then failed loading images: no outputs or access."""
+    without_child_radius(platform, child)
+    resource = next(
+        item
+        for item in platform.resources["management"]
+        if item["type"] == "Demo.Platform/clusters" and item["name"] == child
+    )
+    for key in ("clusterId", "clusterName", "bootstrapAccessRef"):
+        resource["properties"].pop(key)
+    resource["properties"]["provisioningState"] = "Failed"
+    platform.access.pop(child)
+    state = platform.payloads["management"][local.backend_secret_name(resource)]
+    state["resources"] = [
+        item for item in state["resources"] if item["type"] != "kubernetes_secret_v1"
+    ]
+    images = next(item for item in state["resources"] if item["type"] == "terraform_data")
+    images["instances"][0]["status"] = "tainted"
+    return state
+
+
+@pytest.mark.parametrize("world", ["local"], indirect=True)
+def test_local_cleanup_removes_a_failed_child_recipe_through_its_radius_owner(world):
+    engine, platform, _ = world
+    platform.app_namespaces = False
+    fail_child_recipe(platform)
+    assert engine.clean()["status"] == "clean"
+    assert engine.failed_children == {"isolated-1-data"}
+    assert "isolated-1-data" in [
+        name for kind, name in platform.mutations if kind == "radius-child"
+    ]
+
+
+@pytest.mark.parametrize("world", ["local"], indirect=True)
+@pytest.mark.parametrize(
+    "change", ["access-secret", "foreign-cluster", "tainted-cluster", "outputs"]
+)
+def test_local_cleanup_refuses_an_unproven_failed_child_recipe(world, change):
+    engine, platform, _ = world
+    platform.app_namespaces = False
+    state = fail_child_recipe(platform)
+    kind = next(item for item in state["resources"] if item["type"] == "kind_cluster")
+    resource = next(
+        item
+        for item in platform.resources["management"]
+        if item["type"] == "Demo.Platform/clusters" and item["name"] == "isolated-1-data"
+    )
+    if change == "access-secret":
+        platform.access["isolated-1-data"] = uid("unexpected-access")
+    elif change == "foreign-cluster":
+        kind["instances"][0]["attributes"]["name"] = "foreign"
+    elif change == "tainted-cluster":
+        kind["instances"][0]["status"] = "tainted"
+    else:
+        resource["properties"]["clusterName"] = platform.config.slot_name("isolated-1-data")
+    with pytest.raises((local.LocalError, shared.CleanupError)):
+        engine.clean()
+    assert platform.mutations == []
 
 
 def cluster_payload(platform, child="shared-data"):
