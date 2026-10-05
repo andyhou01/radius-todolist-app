@@ -13,8 +13,6 @@ PUBLIC_DOCS = (
     "RUN_AZURE_SCENARIOS.md",
     "RUN_LOCAL_SCENARIOS.md",
     "AGENTS.md",
-    "frontend/AGENTS.md",
-    "frontend/README.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
