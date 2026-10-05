@@ -21,6 +21,7 @@ import redis
 import test_acceptance as existing
 from redis.connection import Connection
 
+from plane_demo.management.providers.identity import local_node_name
 from plane_demo.shared import settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,7 +152,7 @@ class Operator:
                 ],
             },
             "spec": {
-                "nodeName": self.node(slot)["Name"][1:],
+                "nodeName": local_node_name(slot),
                 "serviceAccountName": "data-api-runtime" if component == "data-api" else component,
                 "containers": [
                     {

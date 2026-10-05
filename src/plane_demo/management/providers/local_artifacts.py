@@ -582,14 +582,13 @@ def live_config(
 ) -> dict:
     from uuid import UUID
 
-    from plane_demo.management.providers.identity import DemoConfig
+    from plane_demo.management.providers.identity import DemoConfig, local_node_name
     from plane_demo.management.providers.local_config import private_ipv4
 
     identity = DemoConfig("local", project, deployment, revision=inputs["revision"])
     prefix = identity.stem
     require(
-        inputs["stem"] == prefix
-        and node["metadata"]["name"] == prefix + "-management-control-plane",
+        inputs["stem"] == prefix and node["metadata"]["name"] == local_node_name("management"),
         "management_node_mismatch",
     )
     addresses = [

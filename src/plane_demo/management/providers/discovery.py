@@ -18,7 +18,7 @@ from urllib3.exceptions import HTTPError
 
 from plane_demo.management.providers.azure import TYPES, login_workload_identity
 from plane_demo.management.providers.commands import Commands
-from plane_demo.management.providers.identity import SLOTS, DemoConfig
+from plane_demo.management.providers.identity import SLOTS, DemoConfig, local_node_name
 from plane_demo.management.providers.local_artifacts import binding_inputs
 from plane_demo.management.providers.local_config import LocalConfig
 from plane_demo.management.provisioning import OperatorConfig, ProvisioningError
@@ -105,7 +105,7 @@ def local_configuration(identity: DemoConfig, environment: dict, images: dict, c
     ):
         raise ProvisioningError("management_workload_mismatch")
     system = core.read_namespace("kube-system", _request_timeout=(5, 15))
-    node_name = identity.slot_name("management") + "-control-plane"
+    node_name = local_node_name("management")
     node = core.read_node(node_name, _request_timeout=(5, 15))
     service = core.read_namespaced_service("kubernetes", "default", _request_timeout=(5, 15))
     addresses = [value.address for value in node.status.addresses if value.type == "InternalIP"]

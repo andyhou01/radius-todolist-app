@@ -34,6 +34,8 @@ unset DEMO_KEY_MANAGEMENT DEMO_KEY_SHARED_CONTROL DEMO_KEY_SHARED_DATA \
 stem="$DEMO_PROJECT-$DEMO_DEPLOYMENT-local"
 cluster="$stem-management"
 node="$cluster-control-plane"
+# kind names the container
+kube_node=management-plane
 context="kind-$cluster"
 namespace="$cluster-management"
 host=$(env -i "PATH=$PATH" "HOME=$HOME" "LC_ALL=C" \
@@ -106,12 +108,15 @@ else
     demo_error 'A foreign container occupies the management name'; exit 1;
   }
   jq -n --arg name "$cluster" --arg image "$node_image" --arg project "$DEMO_PROJECT" \
-    --arg deployment "$DEMO_DEPLOYMENT" '
+    --arg deployment "$DEMO_DEPLOYMENT" --arg node "$kube_node" '
     {kind:"Cluster",apiVersion:"kind.x-k8s.io/v1alpha4",name:$name,
       networking:{apiServerAddress:"127.0.0.1",apiServerPort:35495},
       nodes:[{role:"control-plane",image:$image,
         labels:{"radplanes.local/slot":"management","plane-demo/project":$project,
           "plane-demo/deployment":$deployment,"plane-demo/environment":"local"},
+        kubeadmConfigPatches:[
+          ("apiVersion: kubeadm.k8s.io/v1beta3\nkind: InitConfiguration\n"
+            + "nodeRegistration:\n  name: " + $node + "\n")],
         extraMounts:[{hostPath:"/var/run/docker.sock",containerPath:"/run/radplanes/docker.sock",
           readOnly:false}],
         extraPortMappings:[{containerPort:31480,hostPort:35490,
@@ -140,7 +145,7 @@ node_id=$(jq -er --arg name "$node" --arg cluster "$cluster" --arg image "$node_
     .Config.Labels["io.x-k8s.kind.cluster"] == $cluster) |
   .Id | select(test("^[a-f0-9]{64}$"))
 ' <<<"$node_info")
-kube get node "$node" -o json | jq -e --arg project "$DEMO_PROJECT" --arg name "$node" \
+kube get node "$kube_node" -o json | jq -e --arg project "$DEMO_PROJECT" --arg name "$kube_node" \
   --arg deployment "$DEMO_DEPLOYMENT" '
   .metadata.name == $name and .metadata.labels["plane-demo/project"] == $project and
   .metadata.labels["plane-demo/deployment"] == $deployment and
@@ -163,7 +168,7 @@ if [[ "$existing" == true ]]; then
   }
 fi
 encryption=$("${environment[@]}" bash "$ROOT/scripts/operations/local/encryption.sh" \
-  --cluster "$cluster" --node "$node" --kubeconfig "$kubeconfig" --context "$context" \
+  --cluster "$cluster" --node "$kube_node" --kubeconfig "$kubeconfig" --context "$context" \
   --docker-host "$host")
 jq -e --arg id "$node_id" --arg cluster "$cluster" '
   .nodeId == $id and .cluster == $cluster and .syntheticCiphertextVerified == true

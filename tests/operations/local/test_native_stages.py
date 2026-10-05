@@ -48,6 +48,7 @@ args = sys.argv[1:]
 stem, revision = "demo-one-local", "a" * 40
 cluster, namespace = stem + "-management", stem + "-management-management"
 node = cluster + "-control-plane"
+kube_node = "management-plane"
 node_id = "c" * 64
 def save(): store.write_text(json.dumps(state))
 def out(value): print(json.dumps(value))
@@ -236,7 +237,7 @@ elif tool == "kind":
     else: raise AssertionError(args)
 elif tool == "encryption-double":
     assert args[args.index("--cluster")+1] == cluster
-    assert args[args.index("--node")+1] == node
+    assert args[args.index("--node")+1] == kube_node
     assert args[args.index("--context")+1] == "kind-"+cluster
     if state.get("encryption_failure"): fail()
     state["encrypted"]=True; save()
@@ -260,9 +261,9 @@ elif tool == "kubectl":
                        "certificate-authority-data":"c3ludGhldGljLWNh"}}],
             "users":[{"name":cluster,"user":{"client-certificate-data":"cert","client-key-data":"key"}}]})
     elif args[:2] == ["get","node"]:
-        assert args[2] == node
+        assert args[2] == kube_node
         out({"status":{"addresses":[{"type":"InternalIP","address":"172.18.0.2"}]},
-             "metadata":{"name":node,"labels":{
+             "metadata":{"name":kube_node,"labels":{
             "plane-demo/project":"foreign" if state.get("foreign_node") else "demo",
             "plane-demo/deployment":"one","plane-demo/environment":"local",
             "radplanes.local/slot":"management"}}})
@@ -542,6 +543,12 @@ def test_bootstrap_only_creates_management_and_observes_completed_rerun(stage_la
     ]
     trace = calls(stage_lab)
     encrypted = next(i for i, item in enumerate(trace) if item["tool"] == "encryption-double")
+    arguments = trace[encrypted]["args"]
+    assert arguments[arguments.index("--node") + 1] == "management-plane"
+    assert configuration["nodes"][0]["kubeadmConfigPatches"] == [
+        "apiVersion: kubeadm.k8s.io/v1beta3\nkind: InitConfiguration\n"
+        "nodeRegistration:\n  name: management-plane\n"
+    ]
     install = next(
         i for i, item in enumerate(trace) if item["tool"] == "rad" and "install" in item["args"]
     )

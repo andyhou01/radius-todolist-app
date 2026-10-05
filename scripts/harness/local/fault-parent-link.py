@@ -256,10 +256,12 @@ class LocalParentFault(base.ParentFault):
         return self.operator(self.docker("exec", self.node["id"], *args), timeout=10)
 
     def sandbox_identity(self, pod, *, sole_component=False):
+        from plane_demo.management.providers.identity import local_node_name
+
         metadata, spec = pod["metadata"], pod["spec"]
         require(
             metadata.get("namespace") == self.target.namespace
-            and spec.get("nodeName") == self.node["name"]
+            and spec.get("nodeName") == local_node_name(self.target.slot)
             and spec.get("serviceAccountName") == self.component
             and not spec.get("hostNetwork", False)
             and not spec.get("hostPID", False)

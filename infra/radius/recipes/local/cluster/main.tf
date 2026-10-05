@@ -27,13 +27,20 @@ resource "kind_cluster" "child" {
         "radplanes.local/slot"       = var.context.resource.properties.slot
         "plane-demo/resource-prefix" = var.resource_prefix
       }
-      kubeadm_config_patches = [yamlencode({
-        apiVersion = "kubeadm.k8s.io/v1beta3"
-        kind       = "ClusterConfiguration"
-        apiServer = {
-          certSANs = ["localhost", "127.0.0.1", local.cluster_name]
-        }
-      })]
+      kubeadm_config_patches = [
+        yamlencode({
+          apiVersion = "kubeadm.k8s.io/v1beta3"
+          kind       = "ClusterConfiguration"
+          apiServer = {
+            certSANs = ["localhost", "127.0.0.1", local.cluster_name]
+          }
+        }),
+        yamlencode({
+          apiVersion       = "kubeadm.k8s.io/v1beta3"
+          kind             = "InitConfiguration"
+          nodeRegistration = { name = local.node_name }
+        }),
+      ]
 
       extra_port_mappings {
         container_port = 31480

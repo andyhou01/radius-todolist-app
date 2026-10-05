@@ -704,7 +704,7 @@ def test_runtime_auth_uses_rotating_token_and_proves_parent_uid(provider, monkey
         json.dumps({"metadata": {"uid": UID}}),
         json.dumps(
             {
-                "metadata": {"name": "radplanes-local-management-control-plane"},
+                "metadata": {"name": "management-plane"},
                 "status": {"addresses": [{"type": "InternalIP", "address": "172.18.0.2"}]},
             }
         ),
@@ -908,9 +908,7 @@ def test_local_existing_database_runs_read_only_observer_job(provider, monkeypat
     monkeypatch.setattr(provider, "database_resource_exists", lambda _: True)
     monkeypatch.setattr(provider, "rad", lambda *_: json.dumps({"properties": db_properties()}))
     node = {
-        "metadata": {
-            "name": provider.config.allocation("management")["clusterName"] + "-control-plane"
-        },
+        "metadata": {"name": "management-plane"},
         "status": {"addresses": [{"type": "InternalIP", "address": "172.18.0.2"}]},
     }
     provider.commands.run.side_effect = lambda args, **kwargs: (
@@ -1310,7 +1308,7 @@ def test_child_access_run_path_proves_secret_ownership_tls_node_and_cluster_uid(
         "ok",
         json.dumps(
             {
-                "metadata": {"name": context + "-control-plane"},
+                "metadata": {"name": slot + "-plane"},
                 "status": {"addresses": [{"type": "InternalIP", "address": "172.18.0.3"}]},
             }
         ),

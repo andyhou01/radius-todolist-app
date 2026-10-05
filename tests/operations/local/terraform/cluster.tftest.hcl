@@ -98,6 +98,16 @@ run "bounded_recipe_contract" {
   }
 
   assert {
+    condition     = yamldecode(kind_cluster.child.kind_config[0].node[0].kubeadm_config_patches[1]).kind == "InitConfiguration" && yamldecode(kind_cluster.child.kind_config[0].node[0].kubeadm_config_patches[1]).apiVersion == "kubeadm.k8s.io/v1beta3"
+    error_message = "The node-name patch must target kind 0.31's generated InitConfiguration."
+  }
+
+  assert {
+    condition     = yamldecode(kind_cluster.child.kind_config[0].node[0].kubeadm_config_patches[1]).nodeRegistration.name == "shared-control-plane"
+    error_message = "The Kubernetes node name must match the slot's k9s context."
+  }
+
+  assert {
     condition     = kind_cluster.child.kind_config[0].node[0].extra_port_mappings[0].host_port == 35491
     error_message = "The gateway must use the shared-control reservation."
   }

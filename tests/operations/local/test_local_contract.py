@@ -279,7 +279,14 @@ def test_management_and_executor_mount_only_the_socket_not_checkout_files():
     }
     assert config["networking"] == {"apiServerAddress": "127.0.0.1", "apiServerPort": 35495}
     assert config["nodes"][0]["extraPortMappings"][0]["hostPort"] == 35490
-    assert "kubeadmConfigPatches" not in config["nodes"][0]
+    # The only kubeadm patch names the Kubernetes node after its plane.
+    assert [yaml.safe_load(patch) for patch in config["nodes"][0]["kubeadmConfigPatches"]] == [
+        {
+            "apiVersion": "kubeadm.k8s.io/v1beta3",
+            "kind": "InitConfiguration",
+            "nodeRegistration": {"name": "management-plane"},
+        }
+    ]
     overlay = yaml.safe_load(
         (ROOT / "scripts/operations/local/dynamic-rp-overlay.yaml").read_text()
     )

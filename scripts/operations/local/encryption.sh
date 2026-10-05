@@ -16,7 +16,7 @@ fail() {
     printf 'Node encryption failed: %s\n' "$1" >&2; exit 1
 }
 usage() {
-    printf '%s\n' 'Usage: bash encryption.sh --cluster NAME --node NAME --kubeconfig FILE --context NAME [--docker-host unix:///PATH]'
+    printf '%s\n' 'Usage: bash encryption.sh --cluster NAME --node KUBERNETES-NODE --kubeconfig FILE --context NAME [--docker-host unix:///PATH]'
 }
 
 cluster='' node='' kubeconfig='' context='' docker_host=''
@@ -37,7 +37,9 @@ while (($#)); do
     esac
 done
 [[ "$cluster" =~ ^[a-z][a-z0-9-]{0,44}[a-z0-9]$ ]] || fail invalid_cluster
-[[ "$node" == "$cluster-control-plane" ]] || fail invalid_node
+# kind names the container; the Kubernetes node is named after the plane.
+[[ "$node" =~ ^[a-z][a-z0-9-]{0,40}-plane$ ]] || fail invalid_node
+container="$cluster-control-plane"
 [[ "$context" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$ ]] || fail invalid_context
 [[ -f "$kubeconfig" && ! -L "$kubeconfig" ]] || fail explicit_kubeconfig_required
 for tool in docker kubectl jq sleep python3; do
@@ -106,10 +108,11 @@ node_image='kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e02905683
 profile=/etc/kubernetes/radplanes/encryption.yaml
 manifest=/etc/kubernetes/manifests/kube-apiserver.yaml
 
-inspection=$(docker_cli inspect --type container "$node") || fail node_inspection
-identity=$(jq_safe -er --arg cluster "$cluster" --arg node "$node" --arg image "$node_image" '
+inspection=$(docker_cli inspect --type container "$container") || fail node_inspection
+identity=$(jq_safe -er --arg cluster "$cluster" --arg container "$container" \
+    --arg image "$node_image" '
     select(length == 1) | .[0] |
-    select(.Name == ("/" + $node) and .State.Running == true and .Config.Image == $image) |
+    select(.Name == ("/" + $container) and .State.Running == true and .Config.Image == $image) |
     select(.Config.Labels["io.x-k8s.kind.cluster"] == $cluster
         and .Config.Labels["io.x-k8s.kind.role"] == "control-plane") |
     select(all(.Mounts[]?; .Destination as $mount |
@@ -152,7 +155,7 @@ node_uid=$(jq_safe -er --arg node "$node" '
         and .status.nodeInfo.kubeletVersion == "v1.35.0") |
     .metadata.uid | select(test("^[a-f0-9-]{36}$"))
 ' <<<"$node_object") || fail kubernetes_node_mismatch
-manifest_hash=$(docker_cli exec --user 0 "$node" sha256sum "$manifest") || fail manifest_read
+manifest_hash=$(docker_cli exec --user 0 "$container" sha256sum "$manifest") || fail manifest_read
 manifest_hash=${manifest_hash%% *}
 [[ "$manifest_hash" =~ ^[a-f0-9]{64}$ ]] || fail invalid_manifest_digest
 pod=$(kube -n kube-system get pod "kube-apiserver-$node" -o json) || fail apiserver_read
@@ -189,12 +192,12 @@ encryption_state() {
 }
 state=$(encryption_state <<<"$pod") || fail conflicting_encryption_configuration
 
-timeout_version=$(docker_cli exec --user 0 "$node" timeout --version) || fail node_timeout_required
+timeout_version=$(docker_cli exec --user 0 "$container" timeout --version) || fail node_timeout_required
 [[ "$timeout_version" == "timeout (GNU coreutils)"* ]] || fail node_timeout_required
 
 # All key generation, validation and persistence happen inside this exact node.
 # Killing Docker's client does not cancel an exec inside the node. Bound that work there too.
-key_status=$(docker_cli exec --user 0 -i "$node" \
+key_status=$(docker_cli exec --user 0 -i "$container" \
     timeout --signal=TERM --kill-after=2s 20s sh -s -- \
     "$cluster" "$node" "$node_id" "$cluster_uid" "$state" <<'NODE_KEY'
 set +x
@@ -267,7 +270,7 @@ if [[ "$key_status" == created ]]; then
             {name:"radplanes-encryption", mountPath:$path, readOnly:true}] |
         .spec.volumes += [{name:"radplanes-encryption", hostPath:{path:$path,type:"File"}}]
     ' <<<"$pod") || fail manifest_construction
-    docker_cli exec --user 0 -i "$node" timeout --signal=TERM --kill-after=2s 20s sh -c '
+    docker_cli exec --user 0 -i "$container" timeout --signal=TERM --kill-after=2s 20s sh -c '
         set +x
         set -eu
         umask 077

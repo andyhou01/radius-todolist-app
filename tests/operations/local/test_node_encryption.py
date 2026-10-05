@@ -19,7 +19,9 @@ NODE_IMAGE = (
     "kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f"
 )
 CLUSTER = "radplanes-encryption-test"
-NODE = CLUSTER + "-control-plane"
+# kind names the container; the Kubernetes node is named after the plane.
+CONTAINER = CLUSTER + "-control-plane"
+NODE = "management-plane"
 CONTEXT = "kind-" + CLUSTER
 CLUSTER_UID = "11111111-1111-4111-8111-111111111111"
 NODE_UID = "22222222-2222-4222-8222-222222222222"
@@ -95,7 +97,7 @@ if tool == "docker":
         die()
     args = args[2:]
     if args[:3] == ["inspect", "--type", "container"]:
-        assert args[3:] == [state["node"]]
+        assert args[3:] == [state["container"]]
         if state.get("failure") == "hang":
             time.sleep(60)
         if state.get("failure") == "inspect":
@@ -106,7 +108,7 @@ if tool == "docker":
         args = args[3:]
         if args[0] == "-i":
             args = args[1:]
-        assert args[0] == state["node"]
+        assert args[0] == state["container"]
         command = args[1:]
         if command == ["timeout", "--version"]:
             if state.get("missing_node_timeout"):
@@ -284,11 +286,12 @@ def node_lab(tmp_path):
     (tmp_path / "selected.kubeconfig").write_text("synthetic selected access, never global\n")
     state = {
         "node": NODE,
+        "container": CONTAINER,
         "context": CONTEXT,
         "cluster_uid": CLUSTER_UID,
         "node_uid": NODE_UID,
         "inspection": {
-            "Name": "/" + NODE,
+            "Name": "/" + CONTAINER,
             "Id": "a" * 64,
             "State": {"Running": True},
             "Config": {
@@ -486,6 +489,31 @@ def invoke(lab, *extra, xtrace=False, path=None, shell=None, interrupt=None, hom
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+@pytest.mark.parametrize("node", ["", "Management-plane", "management", "management-plane;x"])
+def test_kubernetes_node_name_is_validated_before_any_command(node_lab, node):
+    result = subprocess.run(
+        [
+            shutil.which("bash"),
+            str(SCRIPT),
+            "--cluster",
+            CLUSTER,
+            "--node",
+            node,
+            "--kubeconfig",
+            str(node_lab / "selected.kubeconfig"),
+            "--context",
+            CONTEXT,
+        ],
+        cwd=ROOT,
+        env={"PATH": "/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert "invalid_node" in result.stderr
 
 
 def test_real_bash_and_node_shell_install_without_host_key_or_admission_fields(node_lab):

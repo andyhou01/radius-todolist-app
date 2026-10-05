@@ -13,6 +13,7 @@ import pytest
 from test_acceptance import Clock, faults
 from test_live_discovery import IMAGE_ID, REVISION, SOURCE, NativeCommands, runner, uid
 
+from plane_demo.management.providers.identity import local_node_name
 from scripts.operations.config import DemoConfig, initialize_config
 
 LocalFault = faults.fault_class(SimpleNamespace(environment="local", live=False))
@@ -85,7 +86,7 @@ class FaultCommands(NativeCommands):
                 ],
             },
             "spec": {
-                "nodeName": self.node(slot)["Name"][1:],
+                "nodeName": local_node_name(slot),
                 "serviceAccountName": "data-api-runtime" if component == "data-api" else component,
                 "containers": [{"name": component, "image": image}],
             },
@@ -981,9 +982,14 @@ def test_prepared_azure_scenario_uses_only_shared_capacity(world, monkeypatch):
                 return httpx.Response(503, json={"detail": "allocation_unavailable"})
         response = original(request)
         if request.url.path.startswith("/operations/") and response.status_code == 200:
-            return httpx.Response(200, json={
-                **response.json(), "status": "succeeded", "stage": "available",
-            })
+            return httpx.Response(
+                200,
+                json={
+                    **response.json(),
+                    "status": "succeeded",
+                    "stage": "available",
+                },
+            )
         return response
 
     api.handle = prepared

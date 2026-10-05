@@ -97,6 +97,16 @@ def azure_slot(slot: str) -> bool:
         return False
 
 
+def local_node_name(slot: str) -> str:
+    """Kubernetes node name of a local kind plane; it matches the k9s context name.
+
+    The Docker container keeps kind's `<cluster>-control-plane` name for ownership checks.
+    """
+    if slot not in SLOTS:
+        raise ConfigError("Unknown plane slot")
+    return f"{slot}-plane"
+
+
 def provisioning_namespace(prefix: str, slot: str, *, index: int | None = None) -> str:
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,24}", prefix) or (
         slot == "management" or not azure_slot(slot)

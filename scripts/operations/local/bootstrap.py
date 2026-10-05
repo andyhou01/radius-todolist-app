@@ -34,6 +34,7 @@ from common import (
 from prepare import prepare
 
 from images import require_inspection
+from plane_demo.management.providers.identity import local_node_name
 
 
 def reserve_ports() -> list[socket.socket]:
@@ -69,6 +70,15 @@ def management_config(vm_socket: str) -> dict:
                 "role": "control-plane",
                 "image": NODE_IMAGE,
                 "labels": {"radplanes.local/slot": "management"},
+                "kubeadmConfigPatches": [
+                    yaml.safe_dump(
+                        {
+                            "apiVersion": "kubeadm.k8s.io/v1beta3",
+                            "kind": "InitConfiguration",
+                            "nodeRegistration": {"name": local_node_name("management")},
+                        }
+                    )
+                ],
                 "extraMounts": [
                     {
                         "hostPath": vm_socket,
@@ -174,7 +184,7 @@ def create(commands: Commands, vm_socket: str) -> None:
             "--cluster",
             MANAGEMENT,
             "--node",
-            f"{MANAGEMENT}-control-plane",
+            local_node_name("management"),
             "--kubeconfig",
             str(access),
             "--context",
@@ -221,7 +231,7 @@ def verify_encryption(commands: Commands, namespace: str, name: str) -> None:
             "-n",
             "kube-system",
             "exec",
-            f"etcd-{MANAGEMENT}-control-plane",
+            f"etcd-{local_node_name('management')}",
             "--",
             "etcdctl",
             "--endpoints=https://127.0.0.1:2379",

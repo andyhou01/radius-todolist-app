@@ -1147,8 +1147,10 @@ class Runner:
             "running_image_digest_missing",
         )
         if self.configuration.live and self.configuration.environment == "local":
+            from plane_demo.management.providers.identity import local_node_name
+
             require(
-                pod["spec"].get("nodeName") == kube.target.local["node"]["name"],
+                pod["spec"].get("nodeName") == local_node_name(kube.target.slot),
                 "local_workload_node_mismatch",
             )
             self.verify_live_local_image(kube, expected_image, statuses[0]["imageID"])

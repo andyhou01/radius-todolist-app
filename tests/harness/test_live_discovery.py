@@ -16,6 +16,7 @@ from test_acceptance import runner_module as runner
 from test_export_state import export_module
 from test_first_continuation import HarnessRunCase
 
+from plane_demo.management.providers.identity import local_node_name
 from scripts.operations.config import DemoConfig, initialize_config
 
 REVISION = "a" * 40
@@ -343,7 +344,7 @@ def test_live_workload_checks_running_code_without_saved_image_review(
         "metadata": {"uid": uid("pod")},
         "spec": {
             "containers": [{"name": "management-api", "image": reference}],
-            "nodeName": target.local.get("node", {}).get("name"),
+            "nodeName": local_node_name(target.slot) if config.environment == "local" else None,
         },
         "status": {"containerStatuses": [{"name": "management-api", "imageID": IMAGE_ID}]},
     }

@@ -23,6 +23,7 @@ from plane_demo.management.providers.credentials import (
     CredentialSource,
     credential_roles,
 )
+from plane_demo.management.providers.identity import local_node_name
 from plane_demo.management.providers.local_config import (
     SCOPE,
     SLOTS,
@@ -620,19 +621,13 @@ class LocalProvider:
         return Cluster(slot, self.expected_cluster_id(slot), context, path)
 
     def node_address(self, slot: str) -> str:
-        allocation = self.config.allocation(slot)
-        node = json.loads(
-            self.kubectl(
-                slot, "get", "node", f"{allocation['clusterName']}-control-plane", "-o", "json"
-            )
-        )
+        self.config.allocation(slot)
+        name = local_node_name(slot)
+        node = json.loads(self.kubectl(slot, "get", "node", name, "-o", "json"))
         addresses = [
             item["address"] for item in node["status"]["addresses"] if item["type"] == "InternalIP"
         ]
-        if (
-            node["metadata"]["name"] != f"{allocation['clusterName']}-control-plane"
-            or len(addresses) != 1
-        ):
+        if node["metadata"]["name"] != name or len(addresses) != 1:
             raise ProvisioningError("local_node_identity_mismatch")
         try:
             address = private_ipv4(addresses[0])
@@ -915,9 +910,7 @@ class LocalProvider:
                     {
                         "apiGroups": [""],
                         "resources": ["nodes"],
-                        "resourceNames": [
-                            self.config.allocation("management")["clusterName"] + "-control-plane"
-                        ],
+                        "resourceNames": [local_node_name("management")],
                         "verbs": ["get"],
                     },
                 ],

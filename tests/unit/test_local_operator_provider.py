@@ -404,9 +404,7 @@ def test_local_worker_reconstructs_configuration_from_current_apis(
         )
     )
     core.read_node.return_value = SimpleNamespace(
-        metadata=SimpleNamespace(
-            name=config.allocation("management")["clusterName"] + "-control-plane"
-        ),
+        metadata=SimpleNamespace(name="management-plane"),
         status=SimpleNamespace(
             addresses=[SimpleNamespace(type="InternalIP", address="172.18.0.2")]
         ),

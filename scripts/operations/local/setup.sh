@@ -67,7 +67,7 @@ kube config view --minify -o json | jq -e --arg context "$context" '
 kube config view --minify --raw -o json | jq -er \
   '.clusters[0].cluster["certificate-authority-data"]' >"$work/ca"
 kube get namespace kube-system -o json >"$work/namespace.json"
-kube get node "$cluster-control-plane" -o json >"$work/node.json"
+kube get node management-plane -o json >"$work/node.json"
 kube -n default get service kubernetes -o json >"$work/service.json"
 address=$(jq -er '[.status.addresses[] | select(.type=="InternalIP") | .address] |
   select(length == 1) | .[0]' "$work/node.json")

@@ -515,7 +515,7 @@ class Platform:
                     {"kind": "ReplicaSet", "name": component + "-rs", "uid": uid(slot + "rs")}
                 ],
             },
-            "spec": {"nodeName": self.config.slot_name(slot) + "-control-plane"},
+            "spec": {"nodeName": local.local_node_name(slot)},
         }
 
     def __call__(self, argv, **options):

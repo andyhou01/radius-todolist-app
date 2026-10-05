@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 STATE = ROOT / ".state/local"
 sys.path.insert(0, str(ROOT / "src"))
 
+from plane_demo.management.providers.identity import local_node_name  # noqa: E402
 from plane_demo.management.providers.local_config import LocalConfig, same_radius_id  # noqa: E402
 
 
@@ -458,7 +459,7 @@ class Exporter(shared.Exporter):
             pod["metadata"].get("namespace") == access.namespace
             and pod["spec"].get("serviceAccountName")
             == ("data-api-runtime" if component == "data-api" else component)
-            and pod["spec"].get("nodeName") == self.identities[access.slot]["node"]["name"],
+            and pod["spec"].get("nodeName") == local_node_name(access.slot),
             "local_workload_identity_mismatch",
         )
         return names, pod

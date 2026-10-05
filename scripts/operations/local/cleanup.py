@@ -38,6 +38,7 @@ from common import (
     write_private,
 )
 
+from plane_demo.management.providers.identity import local_node_name
 from plane_demo.management.providers.local_config import same_radius_id
 
 SLOTS = ("management", "shared-control", "shared-data", "isolated-1-control", "isolated-1-data")
@@ -1854,7 +1855,7 @@ class LiveLocalCleanup(live_support().LiveClusterCleanup):
             require(
                 pod["metadata"]["name"] == metadata["name"]
                 and pod["metadata"]["namespace"] == metadata["namespace"]
-                and pod["spec"].get("nodeName") == node["Name"][1:]
+                and pod["spec"].get("nodeName") == local_node_name(slot)
                 and not pod["spec"].get("hostNetwork")
                 and not pod["spec"].get("hostPID"),
                 "Reconciler sandbox owner differs",
