@@ -39,7 +39,7 @@ case '$@' in bootstrap|local-bootstrap) ;; \
 esac
 endef
 
-.PHONY: help init show-config endpoints report api kube fault fault-status environment-clean-plan environment-clean check lint test test-integration check-bicep check-shell check-terraform check-work \
+.PHONY: help init show-config endpoints report api kube planes-k9s fault fault-status environment-clean-plan environment-clean check lint test test-integration check-bicep check-shell check-terraform check-work \
         require-azure confirm-azure build inspect-build bootstrap deploy-management \
         deploy-management-preview export-state test-e2e test-outages clean-plan clean clean-azure verify-clean \
         confirm-local local-build local-inspect-build local-bootstrap \
@@ -129,6 +129,10 @@ api: ## Call ARGS='TARGET METHOD /path'; optional JSON on stdin
 kube: ## Run kubectl with fresh access; ARGS='SLOT get pods'
 	$(SECTION)
 	@$(OPERATE) bash scripts/operations/kube.sh $(ARGS)
+
+planes-k9s: ## Open k9s on every live plane cluster; ARGS=SLOT picks the first
+	$(SECTION)
+	@bash scripts/operations/k9s.sh $(ARGS)
 
 fault: ## Run or restore a parent-link fault; pass helper options through ARGS
 	$(SECTION)

@@ -40,6 +40,17 @@ demo_kube() {
     --namespace "$DEMO_NAMESPACE" --request-timeout=30s "$@"
 }
 
+demo_docker_host() {
+  local host
+  host=$(env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_CONFIG \
+    docker context inspect desktop-linux --format '{{json .Endpoints.docker.Host}}' | jq -er .) || return
+  [[ "$host" == unix:///* && "$host" != *$'\n'* && "$host" != *$'\r'* \
+    && "$host" != *\?* && "$host" != *\#* && "$host" != */../* ]] || {
+    demo_error 'Docker Desktop must use a local Unix socket'; return 1;
+  }
+  printf '%s\n' "$host"
+}
+
 demo_open_cluster() {
   local cluster cluster_id node_ids node_json kube_json expected_server host
   demo_slot "$1" || return
@@ -62,12 +73,7 @@ demo_open_cluster() {
       --context "$DEMO_CONTEXT" --file "$DEMO_KUBECONFIG" --format exec --only-show-errors || return
     chmod 600 "$DEMO_KUBECONFIG"
   else
-    host=$(env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_CONFIG \
-      docker context inspect desktop-linux --format '{{json .Endpoints.docker.Host}}' | jq -er .) || return
-    [[ "$host" == unix:///* && "$host" != *$'\n'* && "$host" != *$'\r'* \
-      && "$host" != *\?* && "$host" != *\#* && "$host" != */../* ]] || {
-      demo_error 'Docker Desktop must use a local Unix socket'; return 1;
-    }
+    host=$(demo_docker_host) || return
     unset DOCKER_CONTEXT DOCKER_CONFIG
     node_ids=$(docker --host "$host" ps -aq --no-trunc \
       --filter "label=io.x-k8s.kind.cluster=$DEMO_CONTEXT") || return

@@ -514,6 +514,11 @@ Initially require three prepared endpoints, no tenants, shared environment
 availability, and HTTP 200. `make fault-status ARGS='SLOT COMPONENT'` reads a
 fault's Kubernetes journal; the running fault helper performs the network checks.
 
+To watch the planes interactively, install `k9s` and run `make planes-k9s` in a
+terminal. It opens every cataloged plane cluster in all namespaces, starting with
+management or `ARGS=SLOT`; type `:ctx` to switch. Its temporary kubeconfig is
+deleted when k9s exits. k9s can edit and delete resources, so use it to observe.
+
 ### Prepare direct API requests
 
 Read the management URL and demo key into shell variables. The key is captured

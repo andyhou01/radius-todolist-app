@@ -24,12 +24,29 @@ spec:
             - /bin/sh
             - -ec
             - |
-              mkdir -p /terraform/.terraform-global
-              cp /opt/radplanes/terraform /terraform/.terraform-global/terraform
-              cp /opt/radplanes/terraform /terraform/terraform
-              touch /terraform/.terraform-global/.terraform-ready
-              chmod 0700 /terraform /terraform/.terraform-global
-              chown -R 65532:65532 /terraform
+              target=/terraform
+              binary=/opt/radplanes/terraform
+              global="$target/.terraform-global"
+              reject_link() {
+                if [ -L "$1" ]; then echo "Refusing symlinked Terraform path: $1" >&2; exit 1; fi
+              }
+              # A restarted Pod reuses this emptyDir. Without DAC_OVERRIDE, root must
+              # reclaim each managed path first and must not recurse into runtime files.
+              reject_link "$target"
+              chown 0:0 "$target"
+              reject_link "$global"
+              mkdir -p "$global"
+              chown 0:0 "$global"
+              for path in "$global/terraform" "$target/terraform" "$global/.terraform-ready"; do
+                reject_link "$path"
+                if [ -e "$path" ]; then chown 0:0 "$path"; fi
+              done
+              cp "$binary" "$global/terraform"
+              cp "$binary" "$target/terraform"
+              touch "$global/.terraform-ready"
+              chmod 0700 "$target" "$global"
+              chown 65532:65532 "$global/terraform" "$target/terraform" \
+                "$global/.terraform-ready" "$global" "$target"
           securityContext:
             runAsUser: 0
             runAsGroup: 0

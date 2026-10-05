@@ -3,6 +3,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tarfile
 from unittest.mock import MagicMock, Mock
 
@@ -299,6 +300,112 @@ def test_management_and_executor_mount_only_the_socket_not_checkout_files():
     assert {m["name"] for m in spec["initContainers"][0]["volumeMounts"]} == {"terraform"}
     with pytest.raises(common.LocalError):
         bootstrap.management_config("/Users/operator/.docker")
+
+
+# Simulates the init container's root user: CHOWN only, without DAC_OVERRIDE or
+# DAC_READ_SEARCH, so non-root-owned paths deny lookup and writes.
+CHOWN_ONLY_ROOT = """
+import json, os, shutil, sys
+from pathlib import Path
+
+name, args = Path(sys.argv[0]).name, sys.argv[1:]
+db = Path(os.environ["OWNERS"])
+owners = json.loads(db.read_text()) if db.exists() else {}
+volume = os.environ["VOLUME"]
+
+def owner(path):
+    return owners.get(os.path.abspath(path), 0)
+
+def deny(path):
+    sys.exit(f"{name}: {path}: Permission denied")
+
+def lookup(path):
+    parent = os.path.dirname(os.path.abspath(path))
+    while parent.startswith(volume):
+        if owner(parent):
+            deny(path)
+        parent = os.path.dirname(parent)
+
+def writable(path):
+    lookup(path)
+    if owner(path if os.path.lexists(path) else os.path.dirname(os.path.abspath(path))):
+        deny(path)
+
+if name == "chown":
+    if args[0].startswith("-"):
+        sys.exit("chown: options are not expected")
+    for path in args[1:]:
+        lookup(path)
+        if os.path.islink(path) or not os.path.exists(path):
+            sys.exit(f"chown: {path}: unexpected target")
+        owners[os.path.abspath(path)] = int(args[0].split(":")[0])
+    db.write_text(json.dumps(owners))
+    sys.exit(0)
+paths = {"cp": args[-1:], "chmod": args[1:]}.get(name, [a for a in args if a != "-p"])
+for path in paths:
+    if name == "mkdir" and os.path.isdir(path):
+        lookup(path)
+    else:
+        writable(path)
+os.execv(shutil.which(name, path=os.environ["REAL_PATH"]), [name, *args])
+"""
+
+
+def test_management_terraform_layout_reinitializes_a_reused_volume(tmp_path):
+    overlay = yaml.safe_load(
+        (ROOT / "scripts/operations/local/dynamic-rp-overlay.yaml").read_text()
+    )
+    script = overlay["spec"]["template"]["spec"]["initContainers"][0]["command"][2]
+    target, binary, outside = tmp_path / "terraform", tmp_path / "binary", tmp_path / "outside"
+    target.mkdir()
+    binary.write_bytes(b"prepared-terraform")
+    outside.write_bytes(b"preserve")
+    script = script.replace("target=/terraform\n", f"target={target}\n", 1)
+    script = script.replace("binary=/opt/radplanes/terraform\n", f"binary={binary}\n", 1)
+    assert "target=/terraform" not in script and "/opt/radplanes" not in script
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    shim = tools / "shim"
+    shim.write_text(f"#!{sys.executable}\n{CHOWN_ONLY_ROOT}")
+    shim.chmod(0o755)
+    for name in ("chown", "chmod", "cp", "mkdir", "touch"):
+        (tools / name).symlink_to(shim)
+    owners = tmp_path / "owners.json"
+    env = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
+    env |= {"OWNERS": str(owners), "VOLUME": str(target), "REAL_PATH": os.environ["PATH"]}
+
+    def initialize():
+        return subprocess.run(
+            ["sh", "-ec", script], env=env, capture_output=True, text=True, timeout=30
+        )
+
+    managed = [
+        target,
+        target / ".terraform-global",
+        target / "terraform",
+        target / ".terraform-global/terraform",
+        target / ".terraform-global/.terraform-ready",
+    ]
+    for attempt in range(2):
+        result = initialize()
+        assert result.returncode == 0, (attempt, result.stderr)
+        recorded = json.loads(owners.read_text())
+        assert {str(path): recorded.get(str(path)) for path in managed} == {
+            str(path): 65532 for path in managed
+        }
+        assert (target / "terraform").read_bytes() == b"prepared-terraform"
+        assert (target / ".terraform-global/terraform").read_bytes() == b"prepared-terraform"
+        assert target.stat().st_mode & 0o777 == 0o700
+        # The runtime later owns private work directories that the restart must not traverse.
+        (target / "runtime-work").mkdir(mode=0o700, exist_ok=True)
+        owners.write_text(json.dumps({**recorded, str(target / "runtime-work"): 65532}))
+
+    (target / "terraform").unlink()
+    (target / "terraform").symlink_to(outside)
+    result = initialize()
+    assert result.returncode != 0
+    assert "Refusing symlinked Terraform path" in result.stderr
+    assert outside.read_bytes() == b"preserve"
 
 
 def test_reserve_all_ten_ports_before_bootstrap_without_binding_in_this_test(monkeypatch):
